@@ -18,66 +18,74 @@ pub struct ButtonPressed {
     target_floor: usize,
 }
 
+impl ButtonPressed {
+    pub fn new_request(p_id: usize, c_floor: usize, t_floor: usize) -> Self {
+        ButtonPressed {
+            person_id: p_id,
+            current_floor: c_floor,
+            target_floor: t_floor,
+        }
+    }
+}
+
 impl Elevator {
-    pub fn move_up() {
-        //logic
+    pub fn new_elevator(elevator_id: usize) -> Self {
+        Elevator { id: elevator_id }
     }
 
-    pub fn move_down() {}
+    pub fn handling_request(
+        elevator_id: usize,
+        queue: &Arc<Mutex<VecDeque<ButtonPressed>>>,
+    ) -> Option<(usize, usize, usize)> {
+        let mut queue = queue.lock().unwrap();
+
+        // Pop the first request from the queue
+        if let Some(request) = queue.pop_front() {
+            println!(
+                "Elevator {} handling request from person {:?}",
+                elevator_id, request.person_id
+            );
+            Some((
+                request.person_id,
+                request.current_floor,
+                request.target_floor,
+            ))
+        } else {
+            // If no request is found, return None
+            None
+        }
+    }
 }
 
 fn main() {
     // share resources
     let queue = Arc::new(Mutex::new(VecDeque::new()));
-    let queue_clone_1 = queue.clone();
-    let queue_clone_2 = queue.clone();
-    let queue_clone_3 = queue.clone();
 
+    // sender, receiver
     let (button_pressed_s, button_pressed_r) = channel();
+    // let (queue_s, queue_r) = channel();
 
-    let pool = ThreadPool::new(3);
+    let pool = ThreadPool::new(4);
 
     // thread for sending request
     pool.execute(move || {
         let button_pressed = [
-            ButtonPressed {
-                person_id: 1,
-                current_floor: 0,
-                target_floor: 5,
-            },
-            ButtonPressed {
-                person_id: 2,
-                current_floor: 2,
-                target_floor: 4,
-            },
-            ButtonPressed {
-                person_id: 3,
-                current_floor: 1,
-                target_floor: 4,
-            },
-            ButtonPressed {
-                person_id: 4,
-                current_floor: 2,
-                target_floor: 0,
-            },
-            ButtonPressed {
-                person_id: 5,
-                current_floor: 3,
-                target_floor: 5,
-            },
-            ButtonPressed {
-                person_id: 6,
-                current_floor: 5,
-                target_floor: 2,
-            },
+            ButtonPressed::new_request(1, 0, 5),
+            ButtonPressed::new_request(2, 2, 4),
+            ButtonPressed::new_request(3, 1, 4),
+            ButtonPressed::new_request(4, 2, 0),
+            ButtonPressed::new_request(5, 3, 5),
+            ButtonPressed::new_request(6, 5, 2),
         ];
 
         for sequence in button_pressed {
             button_pressed_s.send(sequence).unwrap();
-            thread::sleep(Duration::from_millis(500));
+            thread::sleep(Duration::from_millis(100));
         }
     });
 
+    // thread for receiving request
+    let queue_clone_1 = Arc::clone(&queue);
     pool.execute(move || {
         while let Ok(sequence) = button_pressed_r.recv() {
             println!("Received: {:?}", sequence);
@@ -87,24 +95,21 @@ fn main() {
     });
 
     // elevator 1
+    let queue_clone_2 = Arc::clone(&queue);
     pool.execute(move || loop {
-        let elevator_1 = Elevator { id: 1 };
-        let mut queue = queue_clone_2.lock().unwrap();
-        let current_request = queue.pop_front();
-
-        match current_request {
-            Some(request) => println!(
-                "Elevator {} handling request from person {:?}",
-                elevator_1.id, request.person_id
-            ),
-            None => (),
-        }
+        let elevator_1 = Elevator::new_elevator(1);
+        if let Some((person_id, current_floor, target_floor)) =
+            Elevator::handling_request(elevator_1.id, &queue_clone_2)
+        {}
     });
 
     // elevator 2
-    pool.execute(|| {
-        let elevator_2 = Elevator { id: 2 };
-        println!("{}", elevator_2.id);
+    let queue_clone_3 = Arc::clone(&queue);
+    pool.execute(move || loop {
+        let elevator_2 = Elevator::new_elevator(2);
+        if let Some((person_id, current_floor, target_floor)) =
+            Elevator::handling_request(elevator_2.id, &queue_clone_3)
+        {}
     });
 
     loop {
