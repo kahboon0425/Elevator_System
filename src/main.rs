@@ -41,8 +41,13 @@ impl Elevator {
         &self,
         elevator_id: &String,
         queue: &Arc<Mutex<VecDeque<ButtonPressed>>>,
-    ) -> Option<(usize, usize, usize)> {
+    ) -> Option<VecDeque<(usize, usize, usize)>> {
         let mut queue = queue.lock().unwrap();
+        let mut request_queue = VecDeque::new();
+
+        if !queue.is_empty() {
+            println!("Requests: {:?}", queue);
+        }
 
         // Pop the first request from the queue
         if let Some(request) = queue.pop_front() {
@@ -50,11 +55,82 @@ impl Elevator {
                 "\tElevator {} handling request from person {:?} #####",
                 elevator_id, request.person_id
             );
-            Some((
+
+            request_queue.push_back((
                 request.person_id,
                 request.current_floor,
                 request.target_floor,
-            ))
+            ));
+
+            // Check the elevator direction, -1(move down), 1(move up)
+            let initial_direction = if request.target_floor < request.current_floor {
+                -1
+            } else {
+                1
+            };
+
+            let mut final_floor = request.target_floor;
+
+            // Check if there are other requests heading in the same direction
+            let mut i = 0;
+            while i < queue.len() {
+                if let Some(next_request) = queue.get(i) {
+                    let next_request_direction =
+                        if next_request.target_floor < next_request.current_floor {
+                            -1
+                        } else {
+                            1
+                        };
+
+                    // Check if the next request is in the same direction
+                    let is_same_direction = initial_direction == next_request_direction;
+
+                    // Check if the request current floor is higher than current floor
+                    let is_higher_than_current_floor = initial_direction == 1
+                        && next_request.current_floor > request.current_floor;
+                    let is_lower_than_current_floor = initial_direction == -1
+                        && next_request.current_floor < request.current_floor;
+
+                    if is_same_direction
+                        && (is_higher_than_current_floor || is_lower_than_current_floor)
+                    {
+                        if initial_direction == 1 && next_request.target_floor > final_floor {
+                            final_floor = next_request.target_floor;
+                        } else if initial_direction == -1 && next_request.target_floor < final_floor
+                        {
+                            final_floor = next_request.target_floor;
+                        }
+
+                        let new_request = queue.remove(i).unwrap();
+                        request_queue.push_back((
+                            new_request.person_id,
+                            new_request.current_floor,
+                            new_request.target_floor,
+                        ));
+                        continue;
+                    }
+                }
+                i += 1;
+            }
+
+            // Check if there are requests starting from the final floor
+            let mut j = 0;
+            while j < queue.len() {
+                if let Some(next_request) = queue.get(j) {
+                    if next_request.current_floor == final_floor {
+                        let new_request = queue.remove(j).unwrap();
+                        request_queue.push_back((
+                            new_request.person_id,
+                            new_request.current_floor,
+                            new_request.target_floor,
+                        ));
+                        continue;
+                    }
+                }
+                j += 1;
+            }
+
+            Some(request_queue)
         } else {
             // If no request is found, return None
             None
@@ -91,14 +167,14 @@ impl Elevator {
         }
     }
 
-    fn open_lift_door(&self) {
+    pub fn open_lift_door(&self) {
         println!(
             "\tElevator {} opening door at floor {}",
             self.id, self.elevator_current_floor
         );
     }
 
-    fn close_lift_door(&self) {
+    pub fn close_lift_door(&self) {
         println!(
             "\tElevator {} closing door at floor {}",
             self.id, self.elevator_current_floor
@@ -160,7 +236,7 @@ fn main() {
                 sequence.person_id, sequence.current_floor, sequence.target_floor
             );
             button_pressed_s.send(sequence).unwrap();
-            thread::sleep(Duration::from_millis(50));
+            // thread::sleep(Duration::from_millis(50));
         }
     });
 
@@ -168,9 +244,9 @@ fn main() {
     let queue_clone_1 = Arc::clone(&queue);
     pool.execute(move || {
         while let Ok(sequence) = button_pressed_r.recv() {
-            // println!("Received: {:?}", sequence);
+            println!("Received: {:?}", sequence);
             let mut queue = queue_clone_1.lock().unwrap();
-            queue.push_front(sequence);
+            queue.push_back(sequence);
         }
     });
 
@@ -178,28 +254,37 @@ fn main() {
     let queue_clone_2 = Arc::clone(&queue);
     let mut elevator_1_current_floor = 0;
     pool.execute(move || loop {
+        thread::sleep(Duration::from_millis(10));
         let mut elevator_1 = Elevator::new_elevator("A".to_string(), elevator_1_current_floor);
-        if let Some((person_id, current_floor, target_floor)) =
-            elevator_1.check_request(&elevator_1.id, &queue_clone_2)
-        {
-            let elevator_current_floor =
-                elevator_1.handle_request(person_id, current_floor, target_floor);
-            elevator_1_current_floor = elevator_current_floor;
+        if let Some(requests) = elevator_1.check_request(&elevator_1.id, &queue_clone_2) {
+            println!("Requests Elevators 1: {:?}", requests);
         }
+
+        // if let Some((person_id, current_floor, target_floor)) =
+        //     elevator_1.check_request(&elevator_1.id, &queue_clone_2)
+        // {
+        //     let elevator_current_floor =
+        //         elevator_1.handle_request(person_id, current_floor, target_floor);
+        //     elevator_1_current_floor = elevator_current_floor;
+        // }
     });
 
     // elevator 2
     let queue_clone_3 = Arc::clone(&queue);
     let mut elevator_2_current_floor = 0;
     pool.execute(move || loop {
+        thread::sleep(Duration::from_millis(10));
         let mut elevator_2 = Elevator::new_elevator("B".to_string(), elevator_2_current_floor);
-        if let Some((person_id, current_floor, target_floor)) =
-            elevator_2.check_request(&elevator_2.id, &queue_clone_3)
-        {
-            let elevator_current_floor =
-                elevator_2.handle_request(person_id, current_floor, target_floor);
-            elevator_2_current_floor = elevator_current_floor;
+        if let Some(requests) = elevator_2.check_request(&elevator_2.id, &queue_clone_3) {
+            println!("Requests Elevators 2: {:?}", requests);
         }
+        // if let Some((person_id, current_floor, target_floor)) =
+        //     elevator_2.check_request(&elevator_2.id, &queue_clone_3)
+        // {
+        //     let elevator_current_floor =
+        //         elevator_2.handle_request(person_id, current_floor, target_floor);
+        //     elevator_2_current_floor = elevator_current_floor;
+        // }
     });
 
     loop {
