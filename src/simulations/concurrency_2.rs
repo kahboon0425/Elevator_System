@@ -130,19 +130,6 @@ impl Elevator {
                 j += 1;
             }
 
-            // Convert to Vec for sorting
-            let mut request_vec: Vec<_> = request_queue.drain(..).collect();
-
-            // Sort the remaining elements based on the second element of the tuple, skipping the first element
-            let first_request = request_vec.remove(0);
-            request_vec.sort_by(|a, b| a.1.cmp(&b.1));
-
-            // Insert the first element back at the beginning
-            request_vec.insert(0, first_request);
-
-            // Convert back to VecDeque
-            request_queue = VecDeque::from(request_vec);
-
             Some(request_queue)
         } else {
             // If no request is found, return None
@@ -258,18 +245,6 @@ impl Elevator {
 
         self.move_up(first_request, request_queue);
         // self.move_down(first_request, &request_queue);
-        // self.open_lift_door();
-        // println!("Person {} enters elavator {}", person_id, self.id);
-        // self.close_lift_door();
-
-        // if self.elevator_current_floor < user_target_floor {
-        //     self.move_up(user_target_floor);
-        // } else if self.elevator_current_floor > user_target_floor {
-        //     self.move_down(user_target_floor);
-        // }
-        // self.open_lift_door();
-        // println!("Person {} exits elevator {}", person_id, self.id);
-        // self.close_lift_door();
 
         self.elevator_current_floor
     }
@@ -325,7 +300,7 @@ pub fn concurrency_2() {
         if let Some(requests) = elevator_1.check_request(&elevator_1.id, &queue_clone_2) {
             println!("Requests Elevators 1: {:?}", requests);
 
-            // let elevator_current_floor = elevator_1.handle_request(requests);
+            let elevator_current_floor = elevator_1.handle_request(requests);
             // elevator_1_current_floor = elevator_current_floor;
         }
     });
