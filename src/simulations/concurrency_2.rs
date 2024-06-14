@@ -151,33 +151,39 @@ impl Elevator {
         }
         let mut target_floor = first_request.2;
 
+        let mut new_queue = Vec::new();
+
         println!("\tPerson {} enters elevator {}", first_request.0, self.id);
-        if !request_queue.is_empty() {
-            while self.elevator_current_floor < first_request.2 {
-                for _ in 0..request_queue.len() {
-                    let (person_id, user_current_floor, user_target_floor) =
-                        request_queue.pop_front().unwrap();
-                    if user_target_floor > target_floor {
-                        target_floor = user_target_floor;
-                    }
-                    self.elevator_current_floor += 1;
-                    println!(
-                        "\tElevator {} at floor {}",
-                        self.id, self.elevator_current_floor
-                    );
-                    if self.elevator_current_floor == user_current_floor {
-                        println!("\tPerson {} enters elevator {}", person_id, self.id);
-                    }
-                    if self.elevator_current_floor == user_target_floor {
-                        println!("\tPerson {} exits elevator {}", person_id, self.id);
-                    }
-                    if self.elevator_current_floor == first_request.2 {
-                        println!("\tPerson {} exits elevator {}", first_request.0, self.id);
-                    }
-                }
+        while !request_queue.is_empty() {
+            let min_current_floor = request_queue.iter().min_by_key(|r| &r.1).unwrap();
+            // println!("Min current floor: {:?}", min_current_floor);
+            let index = request_queue
+                .iter()
+                .position(|r| r == min_current_floor)
+                .unwrap();
+            let remove_queue = request_queue.remove(index).unwrap();
+            new_queue.push(remove_queue);
+
+            while self.elevator_current_floor < remove_queue.1 {
+                self.elevator_current_floor += 1;
+                println!(
+                    "Elevator {} at floor {}",
+                    self.id, self.elevator_current_floor
+                );
+                println!("Person {} enters elevator {}", remove_queue.0, self.id);
             }
-        } else {
-            println!("\tPerson {} exits elevator {}", first_request.0, self.id);
+        }
+
+        while !new_queue.is_empty() {
+            let min_target_floor = new_queue.iter().min_by_key(|t| &t.2).unwrap();
+            println!("Min target floor {:?}", min_target_floor);
+            let index = new_queue
+                .iter()
+                .position(|r| r == min_target_floor)
+                .unwrap();
+            println!("Index of min element {}", index);
+            let remove_queue = new_queue.remove(index);
+            println!("Remove New Queue: {:?}", remove_queue);
         }
     }
 
@@ -240,10 +246,12 @@ impl Elevator {
                                                             // user_target_floor: usize,
     ) -> usize {
         let first_request = request_queue.pop_front().unwrap();
-        println!("first requestttttttttttttt {:?}", first_request);
-        println!("first requestttttttttttttt {:?}", first_request.1);
+        if first_request.1 > first_request.2 {
+            // self.move_down(first_request, request_queue);
+        } else if first_request.1 < first_request.2 {
+            self.move_up(first_request, request_queue);
+        }
 
-        self.move_up(first_request, request_queue);
         // self.move_down(first_request, &request_queue);
 
         self.elevator_current_floor
@@ -320,6 +328,6 @@ pub fn concurrency_2() {
     });
 
     loop {
-        thread::sleep(Duration::from_secs(10));
+        thread::sleep(Duration::from_secs(100));
     }
 }
