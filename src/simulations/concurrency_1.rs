@@ -151,11 +151,15 @@ fn elevator_system() {
     pool.execute(move || {
         let button_pressed = [
             ButtonPressed::new_request(1, 0, 5),
-            ButtonPressed::new_request(2, 2, 4),
-            ButtonPressed::new_request(3, 1, 4),
-            ButtonPressed::new_request(4, 2, 0),
-            ButtonPressed::new_request(5, 3, 5),
-            ButtonPressed::new_request(6, 5, 2),
+            ButtonPressed::new_request(2, 1, 4),
+            ButtonPressed::new_request(3, 1, 5),
+            ButtonPressed::new_request(4, 2, 6),
+            ButtonPressed::new_request(5, 2, 0),
+            ButtonPressed::new_request(6, 1, 4),
+            ButtonPressed::new_request(7, 2, 0),
+            ButtonPressed::new_request(8, 3, 5),
+            ButtonPressed::new_request(9, 5, 2),
+            ButtonPressed::new_request(10, 5, 2),
         ];
 
         for sequence in button_pressed {
@@ -164,7 +168,7 @@ fn elevator_system() {
                 sequence.person_id, sequence.current_floor, sequence.target_floor
             );
             button_pressed_s.send(sequence).unwrap();
-            thread::sleep(Duration::from_millis(50));
+            thread::sleep(Duration::from_millis(3));
         }
     });
 
