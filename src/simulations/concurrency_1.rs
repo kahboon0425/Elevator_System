@@ -152,14 +152,18 @@ fn elevator_system() {
         let button_pressed = [
             ButtonPressed::new_request(1, 0, 5),
             ButtonPressed::new_request(2, 1, 4),
-            ButtonPressed::new_request(3, 1, 5),
-            ButtonPressed::new_request(4, 2, 6),
-            ButtonPressed::new_request(5, 2, 0),
+            ButtonPressed::new_request(3, 1, 3),
+            ButtonPressed::new_request(4, 1, 2),
+            ButtonPressed::new_request(5, 1, 5),
             ButtonPressed::new_request(6, 1, 4),
-            ButtonPressed::new_request(7, 2, 0),
-            ButtonPressed::new_request(8, 3, 5),
-            ButtonPressed::new_request(9, 5, 2),
-            ButtonPressed::new_request(10, 5, 2),
+            ButtonPressed::new_request(7, 1, 5),
+            ButtonPressed::new_request(8, 2, 6),
+            ButtonPressed::new_request(9, 2, 0),
+            ButtonPressed::new_request(10, 1, 4),
+            ButtonPressed::new_request(11, 2, 0),
+            ButtonPressed::new_request(12, 3, 5),
+            ButtonPressed::new_request(13, 5, 2),
+            ButtonPressed::new_request(14, 5, 2),
         ];
 
         for sequence in button_pressed {

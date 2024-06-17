@@ -91,10 +91,6 @@ impl Elevator {
                     if is_same_direction
                         && (is_higher_than_current_floor || is_lower_than_current_floor)
                     {
-                        println!(
-                            "Elevator current person count: {} ------------------------------",
-                            request_queue.iter().count()
-                        );
                         if request_queue.iter().count() == self.capacity {
                             break;
                         } else {
@@ -106,7 +102,6 @@ impl Elevator {
                 }
                 i += 1;
             }
-            // println!("Count of request queue: {}", request_queue.iter().count());
 
             Some(request_queue)
         } else {
@@ -230,7 +225,7 @@ pub fn elevator_system() {
 
         for sequence in button_pressed {
             button_pressed_s.send(sequence).unwrap();
-            thread::sleep(Duration::from_millis(1));
+            thread::sleep(Duration::from_millis(2));
         }
     });
 
