@@ -13,8 +13,10 @@ use threadpool::ThreadPool;
 pub struct Elevator {
     pub id: String,
     pub elevator_current_floor: usize,
+    pub capacity: usize,
 }
 
+#[derive(PartialEq)]
 pub enum Direction {
     Up,
     Down,
@@ -44,6 +46,7 @@ impl Elevator {
         Elevator {
             id: elevator_id,
             elevator_current_floor: current_floor,
+            capacity: 5,
         }
     }
 
@@ -60,9 +63,9 @@ impl Elevator {
 
             // Check the elevator direction, -1(move down), 1(move up)
             let initial_direction = if request.target_floor < request.current_floor {
-                -1
+                Direction::Down
             } else {
-                1
+                Direction::Up
             };
 
             // Check if there are other requests heading in the same direction
@@ -71,30 +74,39 @@ impl Elevator {
                 if let Some(next_request) = queue.get(i) {
                     let next_request_direction =
                         if next_request.target_floor < next_request.current_floor {
-                            -1
+                            Direction::Down
                         } else {
-                            1
+                            Direction::Up
                         };
 
                     // Check if the next request is in the same direction
                     let is_same_direction = initial_direction == next_request_direction;
 
                     // Check if the request current floor is higher than current floor
-                    let is_higher_than_current_floor = initial_direction == 1
+                    let is_higher_than_current_floor = initial_direction == Direction::Up
                         && next_request.current_floor > request.current_floor;
-                    let is_lower_than_current_floor = initial_direction == -1
+                    let is_lower_than_current_floor = initial_direction == Direction::Down
                         && next_request.current_floor < request.current_floor;
 
                     if is_same_direction
                         && (is_higher_than_current_floor || is_lower_than_current_floor)
                     {
-                        let new_request = queue.remove(i).unwrap();
-                        request_queue.push_back(new_request);
-                        continue;
+                        println!(
+                            "Elevator current person count: {} ------------------------------",
+                            request_queue.iter().count()
+                        );
+                        if request_queue.iter().count() == self.capacity {
+                            break;
+                        } else {
+                            let new_request = queue.remove(i).unwrap();
+                            request_queue.push_back(new_request);
+                            continue;
+                        }
                     }
                 }
                 i += 1;
             }
+            // println!("Count of request queue: {}", request_queue.iter().count());
 
             Some(request_queue)
         } else {
@@ -202,23 +214,23 @@ pub fn elevator_system() {
         let button_pressed = [
             ButtonPressed::new_request(1, 0, 5),
             ButtonPressed::new_request(2, 1, 4),
-            ButtonPressed::new_request(3, 1, 5),
-            ButtonPressed::new_request(4, 2, 6),
-            ButtonPressed::new_request(5, 2, 0),
+            ButtonPressed::new_request(3, 1, 3),
+            ButtonPressed::new_request(4, 1, 2),
+            ButtonPressed::new_request(5, 1, 5),
             ButtonPressed::new_request(6, 1, 4),
-            ButtonPressed::new_request(7, 2, 0),
-            ButtonPressed::new_request(8, 3, 5),
-            ButtonPressed::new_request(9, 5, 2),
-            ButtonPressed::new_request(10, 5, 2),
+            ButtonPressed::new_request(7, 1, 5),
+            ButtonPressed::new_request(8, 2, 6),
+            ButtonPressed::new_request(9, 2, 0),
+            ButtonPressed::new_request(10, 1, 4),
+            ButtonPressed::new_request(11, 2, 0),
+            ButtonPressed::new_request(12, 3, 5),
+            ButtonPressed::new_request(13, 5, 2),
+            ButtonPressed::new_request(14, 5, 2),
         ];
 
         for sequence in button_pressed {
-            println!(
-                "\t Person {} press lift button at floor {} to floor {}",
-                sequence.person_id, sequence.current_floor, sequence.target_floor
-            );
             button_pressed_s.send(sequence).unwrap();
-            thread::sleep(Duration::from_millis(3));
+            thread::sleep(Duration::from_millis(1));
         }
     });
 
@@ -228,6 +240,10 @@ pub fn elevator_system() {
         while let Ok(sequence) = button_pressed_r.recv() {
             let mut queue = queue_clone_1.lock().unwrap();
             queue.push_back(sequence);
+            println!(
+                "\t Person {} press lift button at floor {} to floor {}",
+                sequence.person_id, sequence.current_floor, sequence.target_floor
+            );
         }
         s.send(()).unwrap();
     });
