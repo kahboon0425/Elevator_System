@@ -50,10 +50,7 @@ impl Elevator {
         }
     }
 
-    pub fn elevator_task(elevator: Elevator, elevator_queue: &Arc<Mutex<VecDeque<ButtonPressed>>>) {
-    }
-
-    pub fn check_request(
+    pub fn process_requests(
         &self,
         queue: &Arc<Mutex<VecDeque<ButtonPressed>>>,
     ) -> Option<VecDeque<ButtonPressed>> {
@@ -84,16 +81,13 @@ impl Elevator {
                     // Check if the next request is in the same direction
                     let is_same_direction = initial_direction == next_request_direction;
 
-                    // Check if the request current floor is higher than current floor
-                    let is_higher_than_current_floor = initial_direction == Direction::Up
-                        && next_request.current_floor >= request.current_floor;
-                    let is_lower_than_current_floor = initial_direction == Direction::Down
-                        && next_request.current_floor <= request.current_floor;
+                    let is_in_direction = match initial_direction {
+                        Direction::Up => next_request.current_floor >= request.current_floor,
+                        Direction::Down => next_request.current_floor <= request.current_floor,
+                    };
 
-                    if is_same_direction
-                        && (is_higher_than_current_floor || is_lower_than_current_floor)
-                    {
-                        if request_queue.iter().count() == self.capacity {
+                    if is_same_direction && is_in_direction {
+                        if request_queue.len() == self.capacity {
                             break;
                         } else {
                             let new_request = queue.remove(i).unwrap();
@@ -118,7 +112,6 @@ impl Elevator {
         direction: Direction,
     ) {
         loop {
-            // Find the min floor any person wants to enter
             let floor = match direction {
                 Direction::Up => request_queue.iter().min_by_key(|r| {
                     if r.entered {
@@ -136,34 +129,46 @@ impl Elevator {
                 }),
             };
 
-            if let Some(floor) = floor {
-                let floor = if floor.entered {
-                    floor.target_floor
+            if let Some(&request) = floor {
+                let target_floor = if request.entered {
+                    request.target_floor
                 } else {
-                    floor.current_floor
+                    request.current_floor
                 };
 
-                println!("\tElevator {} stopped at floor {}", self.id, floor);
-
-                // Get all the people that want to enter the lift
-                let enter_person = request_queue
-                    .iter_mut()
-                    .filter(|r| r.current_floor == floor);
-                for person in enter_person {
-                    person.entered = true;
+                if self.elevator_current_floor < target_floor {
                     println!(
-                        "Person {} enters elevator {} at floor {}",
-                        person.person_id, self.id, floor
+                        "\tElevator {} move up and stopped at floor {}",
+                        self.id, target_floor
                     );
+                } else if self.elevator_current_floor > target_floor {
+                    println!(
+                        "\tElevator {} move down and stopped at floor {}",
+                        self.id, target_floor
+                    );
+                } else {
+                    println!("\tElevator {} stopped at floor {}", self.id, target_floor);
                 }
 
-                self.elevator_current_floor = floor;
+                // Get all the people that want to enter the lift
+                request_queue
+                    .iter_mut()
+                    .filter(|r| r.current_floor == target_floor)
+                    .for_each(|r| {
+                        r.entered = true;
+                        println!(
+                            "Person {} enters elevator {} at floor {}",
+                            r.person_id, self.id, target_floor
+                        );
+                    });
+
+                self.elevator_current_floor = target_floor;
 
                 // Get all the people that want to exit lift
                 let exit_idx = request_queue
                     .iter()
                     .enumerate()
-                    .filter(|(_, r)| r.entered && r.target_floor == floor)
+                    .filter(|(_, r)| r.entered && r.target_floor == target_floor)
                     .map(|(i, _)| i)
                     .collect::<Vec<_>>();
 
@@ -172,19 +177,19 @@ impl Elevator {
                         "Person {} exits elevator {} at floor {}",
                         request_queue[idx - i].person_id,
                         self.id,
-                        floor
+                        target_floor
                     );
                     request_queue.remove(idx - i);
                 }
 
-                self.elevator_current_floor = floor;
+                self.elevator_current_floor = target_floor;
             } else {
                 break;
             }
         }
     }
 
-    pub fn handle_request(&mut self, request_queue: VecDeque<ButtonPressed>) -> usize {
+    pub fn handle_requests(&mut self, request_queue: VecDeque<ButtonPressed>) -> usize {
         let first_request = request_queue.get(0).unwrap();
         if first_request.current_floor > first_request.target_floor {
             self.move_elevator(request_queue, Direction::Down);
@@ -193,6 +198,34 @@ impl Elevator {
         }
 
         self.elevator_current_floor
+    }
+}
+
+fn process_elevator_requests(
+    id: &str,
+    queue: Arc<Mutex<VecDeque<ButtonPressed>>>,
+    r: crossbeam_channel::Receiver<()>,
+) {
+    let mut current_floor = 0;
+    let mut elevator = Elevator::new_elevator(id.to_string(), current_floor);
+    loop {
+        thread::sleep(Duration::from_millis(10));
+        if let Some(requests) = elevator.process_requests(&queue) {
+            // println!("Request Queue Elevator {}: {:?}", id, requests);
+
+            println!(
+                "\tElevator {} handle request of person {:?}",
+                elevator.id,
+                requests.iter().map(|r| r.person_id).collect::<Vec<_>>()
+            );
+
+            elevator.handle_requests(requests);
+            current_floor = elevator.elevator_current_floor;
+        }
+
+        if queue.lock().unwrap().is_empty() && !r.is_empty() {
+            break;
+        }
     }
 }
 
@@ -212,22 +245,15 @@ pub fn elevator_system() {
             ButtonPressed::new_request(1, 0, 5),
             ButtonPressed::new_request(2, 1, 4),
             ButtonPressed::new_request(3, 1, 3),
-            ButtonPressed::new_request(4, 1, 2),
-            ButtonPressed::new_request(5, 1, 5),
-            ButtonPressed::new_request(6, 1, 4),
-            ButtonPressed::new_request(7, 1, 5),
-            ButtonPressed::new_request(8, 2, 6),
-            ButtonPressed::new_request(9, 2, 0),
-            ButtonPressed::new_request(10, 1, 4),
-            ButtonPressed::new_request(11, 2, 0),
-            ButtonPressed::new_request(12, 3, 5),
-            ButtonPressed::new_request(13, 5, 2),
-            ButtonPressed::new_request(14, 5, 2),
+            ButtonPressed::new_request(4, 2, 6),
+            ButtonPressed::new_request(5, 2, 0),
+            ButtonPressed::new_request(6, 5, 3),
+            ButtonPressed::new_request(7, 5, 2),
         ];
 
         for sequence in button_pressed {
             button_pressed_s.send(sequence).unwrap();
-            thread::sleep(Duration::from_millis(1));
+            thread::sleep(Duration::from_millis(2));
         }
     });
 
@@ -242,47 +268,19 @@ pub fn elevator_system() {
                 sequence.person_id, sequence.current_floor, sequence.target_floor
             );
         }
+        // Tell when finished
         s.send(()).unwrap();
     });
 
-    // elevator 1
-    let queue_clone_2 = queue.clone();
-    let r1_clone = r.clone();
-    let mut elevator_1_current_floor = 0;
-    pool.execute(move || loop {
-        // thread::sleep(Duration::from_millis(10));
-        let mut elevator_1 = Elevator::new_elevator("A".to_string(), elevator_1_current_floor);
-        if let Some(requests) = elevator_1.check_request(&queue_clone_2) {
-            println!("Request Queue Elevator A: {:?}", requests);
-            let elevator_current_floor = elevator_1.handle_request(requests);
-            elevator_1_current_floor = elevator_current_floor;
-        }
-        if queue_clone_2.lock().unwrap().is_empty() {
-            if !r1_clone.is_empty() {
-                break;
-            }
-        }
-    });
+    // elevator A
+    let queue_clone_2 = Arc::clone(&queue);
+    let r_clone_2 = r.clone();
+    pool.execute(move || process_elevator_requests("A", queue_clone_2, r_clone_2));
 
-    // elevator 2
-    let queue_clone_3 = queue.clone();
-    let r2_clone = r.clone();
-    let mut elevator_2_current_floor = 0;
-    pool.execute(move || loop {
-        // thread::sleep(Duration::from_millis(10));
-        let mut elevator_2 = Elevator::new_elevator("B".to_string(), elevator_2_current_floor);
-        if let Some(requests) = elevator_2.check_request(&queue_clone_3) {
-            println!("Request Queue Elevator B: {:?}", requests);
-            let elevator_current_floor = elevator_2.handle_request(requests);
-            elevator_2_current_floor = elevator_current_floor;
-        }
-
-        if queue_clone_3.lock().unwrap().is_empty() {
-            if !r2_clone.is_empty() {
-                break;
-            }
-        }
-    });
+    // elevator B
+    let queue_clone_3 = Arc::clone(&queue);
+    let r_clone_3 = r.clone();
+    pool.execute(move || process_elevator_requests("B", queue_clone_3, r_clone_3));
 
     pool.join();
 }
