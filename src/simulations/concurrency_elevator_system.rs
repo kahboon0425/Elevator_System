@@ -201,34 +201,6 @@ impl Elevator {
     }
 }
 
-fn process_elevator_requests(
-    id: &str,
-    queue: Arc<Mutex<VecDeque<ButtonPressed>>>,
-    r: crossbeam_channel::Receiver<()>,
-) {
-    let mut current_floor = 0;
-    let mut elevator = Elevator::new_elevator(id.to_string(), current_floor);
-    loop {
-        thread::sleep(Duration::from_millis(10));
-        if let Some(requests) = elevator.process_requests(&queue) {
-            // println!("Request Queue Elevator {}: {:?}", id, requests);
-
-            println!(
-                "\tElevator {} handle request of person {:?}",
-                elevator.id,
-                requests.iter().map(|r| r.person_id).collect::<Vec<_>>()
-            );
-
-            elevator.handle_requests(requests);
-            current_floor = elevator.elevator_current_floor;
-        }
-
-        if queue.lock().unwrap().is_empty() && !r.is_empty() {
-            break;
-        }
-    }
-}
-
 pub fn elevator_system() {
     // share resources
     let queue = Arc::new(Mutex::new(VecDeque::new()));
@@ -272,20 +244,57 @@ pub fn elevator_system() {
         s.send(()).unwrap();
     });
 
-    // elevator A
-    let queue_clone_2 = Arc::clone(&queue);
-    let r_clone_2 = r.clone();
-    pool.execute(move || process_elevator_requests("A", queue_clone_2, r_clone_2));
+    // elevator 1
+    let queue_clone_2 = queue.clone();
+    let r1_clone = r.clone();
+    let mut elevator_1_current_floor = 0;
+    pool.execute(move || loop {
+        thread::sleep(Duration::from_millis(10));
+        let mut elevator_1 = Elevator::new_elevator("A".to_string(), elevator_1_current_floor);
+        if let Some(requests) = elevator_1.process_requests(&queue_clone_2) {
+            println!(
+                "\tElevator {} handle request of person {:?}",
+                elevator_1.id,
+                requests.iter().map(|r| r.person_id).collect::<Vec<_>>()
+            );
+            let elevator_current_floor = elevator_1.handle_requests(requests);
+            elevator_1_current_floor = elevator_current_floor;
+        }
+        if queue_clone_2.lock().unwrap().is_empty() {
+            if !r1_clone.is_empty() {
+                break;
+            }
+        }
+    });
 
-    // elevator B
-    let queue_clone_3 = Arc::clone(&queue);
-    let r_clone_3 = r.clone();
-    pool.execute(move || process_elevator_requests("B", queue_clone_3, r_clone_3));
+    // elevator 2
+    let queue_clone_3 = queue.clone();
+    let r2_clone = r.clone();
+    let mut elevator_2_current_floor = 0;
+    pool.execute(move || loop {
+        thread::sleep(Duration::from_millis(10));
+        let mut elevator_2 = Elevator::new_elevator("B".to_string(), elevator_2_current_floor);
+        if let Some(requests) = elevator_2.process_requests(&queue_clone_3) {
+            println!(
+                "\tElevator {} handle request of person {:?}",
+                elevator_2.id,
+                requests.iter().map(|r| r.person_id).collect::<Vec<_>>()
+            );
+            let elevator_current_floor = elevator_2.handle_requests(requests);
+            elevator_2_current_floor = elevator_current_floor;
+        }
+
+        if queue_clone_3.lock().unwrap().is_empty() {
+            if !r2_clone.is_empty() {
+                break;
+            }
+        }
+    });
 
     pool.join();
 }
 
-pub fn concurrency_2() {
+pub fn concurrency_elevator_system() {
     benchmark!(1, {
         elevator_system();
     });
