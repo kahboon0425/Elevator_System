@@ -6,4 +6,7 @@ edition = "2021"
 [dependencies]
 bma-benchmark = "0.0.24"
 crossbeam-channel = "0.5.13"
+peak_alloc = "0.2.1"
+rand = "0.8.5"
+scheduled-thread-pool = "0.2.7"
 threadpool = "1.8.1"
