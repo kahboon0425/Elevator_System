@@ -6,4 +6,5 @@ use simulations::scheduling_elevator_system::scheduling_elevator_system;
 pub fn main() {
     // concurrency_elevator_system();
     benchmark!(1, { scheduling_elevator_system() });
+    // scheduling_elevator_system();
 }

@@ -3,6 +3,7 @@ extern crate rand;
 extern crate scheduled_thread_pool;
 use crossbeam_channel::unbounded;
 use scheduled_thread_pool::ScheduledThreadPool;
+use std::sync::mpsc::channel;
 use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},
@@ -212,114 +213,121 @@ impl Elevator {
 }
 
 pub fn elevator_system() {
+    // Button pressed
+    let mut button_pressed = VecDeque::from(vec![
+        ButtonPressed::new_request(1, 0, 5),
+        ButtonPressed::new_request(2, 1, 4),
+        ButtonPressed::new_request(3, 1, 3),
+        ButtonPressed::new_request(4, 2, 6),
+        ButtonPressed::new_request(5, 2, 0),
+        ButtonPressed::new_request(6, 5, 3),
+        ButtonPressed::new_request(7, 5, 2),
+    ]);
+
     // Share resources
     let queue = Arc::new(Mutex::new(VecDeque::new()));
 
     // Sender, receiver
-    let (button_pressed_s, button_pressed_r) = unbounded();
-    // let (request_s, request_r) = unbounded();
-    let (elevator_1_s, elevator_1_r) = unbounded();
-    let (elevator_2_s, elevator_2_r) = unbounded();
+    let (elevator_1_s, elevator_1_r) = channel();
+    let (elevator_2_s, elevator_2_r) = channel();
     let (s, r) = unbounded();
 
     let sched = ScheduledThreadPool::new(3);
 
     // Thread for receiving request
-    let mut count = 0;
     let queue_clone_1 = Arc::clone(&queue);
-    sched.execute_at_fixed_rate(Duration::from_secs(0), Duration::from_secs(5), move || {
-        let button_pressed = [
-            ButtonPressed::new_request(1, 0, 5),
-            ButtonPressed::new_request(2, 1, 4),
-            ButtonPressed::new_request(3, 1, 3),
-            ButtonPressed::new_request(4, 2, 6),
-            ButtonPressed::new_request(5, 2, 0),
-            ButtonPressed::new_request(6, 5, 3),
-            ButtonPressed::new_request(7, 5, 2),
-        ];
-
-        if count < button_pressed.len() {
-            for sequence in button_pressed {
+    sched.execute_at_fixed_rate(
+        Duration::from_millis(0),
+        Duration::from_millis(3),
+        move || {
+            if let Some(sequence) = button_pressed.pop_front() {
                 println!(
                     "Person {} press lift button at floor {} to floor {} *****",
                     sequence.person_id, sequence.current_floor, sequence.target_floor
                 );
-                button_pressed_s.send(sequence).unwrap();
-                count += 1;
+                let mut queue = queue_clone_1.lock().unwrap();
+                queue.push_back(sequence);
+            } else {
+                s.send(()).unwrap();
+                // return;
+
+                // if s.send(()).is_err() {
+                //     return;
+                // }
+                // return;
             }
-        } else {
-            s.send(()).unwrap();
-            return;
-        }
-    });
+        },
+    );
 
     // Elevator 1
     // let queue_clone_2 = Arc::clone(&queue);
     let r1_clone = r.clone();
     let mut elevator_1_current_floor = 0;
     let queue_clone_1 = Arc::clone(&queue);
-    let button_pressed_clone_1 = button_pressed_r.clone();
-    sched.execute_at_fixed_rate(Duration::from_secs(0), Duration::from_secs(1), move || {
-        println!("Elevator A: Checking for requests");
-        while let Ok(sequence) = button_pressed_clone_1.try_recv() {
-            let mut queue = queue_clone_1.lock().unwrap();
-            queue.push_back(sequence);
-        }
-        let mut elevator_1 = Elevator::new_elevator("A".to_string(), elevator_1_current_floor);
-        elevator_1.update_status();
-        if let Some(requests) = elevator_1.process_requests(&queue_clone_1) {
-            println!(
-                "\tElevator {} handle request of person {:?}",
-                elevator_1.id,
-                requests.iter().map(|r| r.person_id).collect::<Vec<_>>()
-            );
-            let elevator_current_floor = elevator_1.handle_requests(requests);
-            elevator_1_current_floor = elevator_current_floor;
-        }
-        if !r1_clone.is_empty() {
-            if queue_clone_1.lock().unwrap().is_empty() {
-                println!("Elevator A: No more requests, stopping...");
+    sched.execute_at_fixed_rate(
+        Duration::from_millis(5),
+        Duration::from_millis(3),
+        move || {
+            if !r1_clone.is_empty() && queue_clone_1.lock().unwrap().is_empty() {
+                // println!("Elevator A: No more requests, stopping...");
                 elevator_1_s.send(()).unwrap();
-                return;
+                // if elevator_1_s.send(()).is_err() {
+                //     return;
+                // }
+                // return;
             }
-        }
-    });
+            let mut elevator_1 = Elevator::new_elevator("A".to_string(), elevator_1_current_floor);
+            elevator_1.update_status();
+            if let Some(requests) = elevator_1.process_requests(&queue_clone_1) {
+                println!(
+                    "\tElevator {} handle request of person {:?}",
+                    elevator_1.id,
+                    requests.iter().map(|r| r.person_id).collect::<Vec<_>>()
+                );
+                let elevator_current_floor = elevator_1.handle_requests(requests);
+                elevator_1_current_floor = elevator_current_floor;
+            }
+        },
+    );
 
     // Elevator 2
     let queue_clone_2 = Arc::clone(&queue);
     let r2_clone = r.clone();
     let mut elevator_2_current_floor = 0;
-    let button_pressed_clone = button_pressed_r.clone();
-    sched.execute_at_fixed_rate(Duration::from_secs(0), Duration::from_secs(1), move || {
-        println!("Elevator B: Checking for requests");
-        while let Ok(sequence) = button_pressed_clone.try_recv() {
-            let mut queue = queue_clone_2.lock().unwrap();
-            queue.push_back(sequence);
-        }
-        let mut elevator_2 = Elevator::new_elevator("B".to_string(), elevator_2_current_floor);
-        elevator_2.update_status();
-        if let Some(requests) = elevator_2.process_requests(&queue_clone_2) {
-            println!(
-                "\tElevator {} handle request of person {:?}",
-                elevator_2.id,
-                requests.iter().map(|r| r.person_id).collect::<Vec<_>>()
-            );
-            let elevator_current_floor = elevator_2.handle_requests(requests);
-            elevator_2_current_floor = elevator_current_floor;
-        }
-        if !r2_clone.is_empty() {
-            if queue_clone_2.lock().unwrap().is_empty() {
-                println!("Elevator B: No more requests, stopping...");
+    sched.execute_at_fixed_rate(
+        Duration::from_millis(5),
+        Duration::from_millis(2),
+        move || {
+            // println!("Elevator B: Checking for requests");
+            if !r2_clone.is_empty() && queue_clone_2.lock().unwrap().is_empty() {
+                // println!("Elevator B: No more requests, stopping...");
                 elevator_2_s.send(()).unwrap();
-                return;
+                // if elevator_2_s.send(()).is_err() {
+                //     return;
+                // }
+                // return;
             }
-        }
-    });
+            let mut elevator_2 = Elevator::new_elevator("B".to_string(), elevator_2_current_floor);
+            elevator_2.update_status();
+            if let Some(requests) = elevator_2.process_requests(&queue_clone_2) {
+                println!(
+                    "\tElevator {} handle request of person {:?}",
+                    elevator_2.id,
+                    requests.iter().map(|r| r.person_id).collect::<Vec<_>>()
+                );
+                let elevator_current_floor = elevator_2.handle_requests(requests);
+                elevator_2_current_floor = elevator_current_floor;
+            }
+        },
+    );
 
     loop {
-        if !elevator_1_r.is_empty() && !elevator_2_r.is_empty() {
-            println!("All customers have successfully reached their destinations.");
-            break;
+        match (elevator_1_r.recv(), elevator_2_r.recv()) {
+            (Ok(_), Ok(_)) => {
+                println!("All customers have successfully reached their destinations.");
+                break;
+            }
+            _ => (),
         }
     }
 }
