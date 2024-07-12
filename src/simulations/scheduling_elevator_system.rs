@@ -50,11 +50,11 @@ impl Elevator {
         }
     }
 
+    /// Find all users to fetch.
     pub fn process_requests(
         &self,
-        queue: &mut MutexGuard<VecDeque<ButtonPressed>>,
+        queue: &mut VecDeque<ButtonPressed>,
     ) -> Option<VecDeque<ButtonPressed>> {
-        // let mut queue = queue.lock().unwrap();
         let mut request_queue = VecDeque::new();
 
         // Pop the first request from the queue
@@ -215,7 +215,7 @@ impl Elevator {
 
 pub fn elevator_system() {
     // Button pressed
-    let mut button_pressed = VecDeque::from(vec![
+    let mut button_presses = VecDeque::from(vec![
         ButtonPressed::new_request(1, 0, 5),
         ButtonPressed::new_request(2, 1, 4),
         ButtonPressed::new_request(3, 1, 3),
@@ -223,10 +223,9 @@ pub fn elevator_system() {
     ]);
 
     // Share resources
-    let queue = Arc::new(Mutex::new(VecDeque::new()));
+    let button_press_queue = Arc::new(Mutex::new(VecDeque::new()));
 
     // Sender, receiver
-    let (elevator_1_s, elevator_1_r) = unbounded();
     let (elevator_2_s, elevator_2_r) = unbounded();
     let (elevator_1_request_s, elevator_1_request_r) = channel();
     let (elevator_2_request_s, elevator_2_request_r) = channel();
@@ -234,95 +233,135 @@ pub fn elevator_system() {
     let (elevator_2_finish_s, elevator_2_finish_r) = unbounded();
     let (s, r) = unbounded();
 
-    let sched = ScheduledThreadPool::new(3);
+    let scheduled_thread_pool = ScheduledThreadPool::new(3);
     let pool = ThreadPool::new(2);
-    let elevator_a_requests_queue = Arc::new(Mutex::new(VecDeque::new()));
     let elevator_b_requests_queue = Arc::new(Mutex::new(VecDeque::new()));
 
-    let done_marker = Arc::new(Mutex::new(false));
+    let complete_receiving_buttons = Arc::new(Mutex::new(false));
 
-    // Thread for receiving request
-    let queue_clone_1 = Arc::clone(&queue);
-    sched.execute_at_fixed_rate(
-        Duration::from_millis(0),
-        Duration::from_millis(2),
-        move || {
-            if let Some(sequence) = button_pressed.pop_front() {
-                let mut queue = queue_clone_1.lock().unwrap();
-                queue.push_back(sequence);
-                println!(
-                    "Person {} press lift button at floor {} to floor {} *****",
-                    sequence.person_id, sequence.current_floor, sequence.target_floor
-                );
-            } else {
-                s.send("Done").unwrap();
-            }
-        },
-    );
+    {
+        // Thread for receiving button request
+        let button_press_queue = Arc::clone(&button_press_queue);
+        let complete_receiving_buttons = Arc::clone(&complete_receiving_buttons);
 
-    // Elevator 1 process request
-    let mut elevator_1_current_floor = 0;
-    let queue_clone_1 = Arc::clone(&queue);
-    let elevator_a_request_queue_clone_1 = Arc::clone(&elevator_a_requests_queue);
-    sched.execute_at_fixed_rate(
-        Duration::from_millis(5),
-        Duration::from_millis(5),
-        move || {
-            let elevator_1 = Elevator::new_elevator("A".to_string(), elevator_1_current_floor);
-            if let Some(requests) = elevator_1.process_requests(&mut queue_clone_1.lock().unwrap())
-            {
-                // println!("Requestsssssssssssss: {:?}", requests);
-
-                let mut elevator_a_requests_queue =
-                    elevator_a_request_queue_clone_1.lock().unwrap();
-                for request in requests.iter() {
-                    elevator_a_requests_queue.push_back(*request);
+        // TODO: Cancel the handle in the main thread for a graceful exit.
+        let handle = scheduled_thread_pool.execute_at_fixed_rate(
+            Duration::from_millis(0),
+            Duration::from_millis(2),
+            move || {
+                if let Some(button_pressed) = button_presses.pop_front() {
+                    // SAFETY: Must wait for button press queue to become available.
+                    let mut button_press_queue = button_press_queue.lock().unwrap();
+                    button_press_queue.push_back(button_pressed);
+                    println!(
+                        "Person {} press lift button at floor {} to floor {} *****",
+                        button_pressed.person_id,
+                        button_pressed.current_floor,
+                        button_pressed.target_floor
+                    );
+                } else {
+                    *complete_receiving_buttons.lock().unwrap() = true;
+                    // TODO: Remove this
+                    s.send("Done").unwrap();
                 }
-                println!("Request Queue lift A: {:?}", elevator_a_requests_queue);
+            },
+        );
+    }
 
-                elevator_1_request_s.send("Queue").unwrap();
-            } else {
-                elevator_1_s.send(()).unwrap();
-            }
-        },
-    );
+    pub enum QueueStatus {
+        NewQueue,
+        Empty,
+        Done,
+    }
 
-    // Elevator 1 handling request
-    let elevator_a_request_queue_clone_2 = Arc::clone(&elevator_a_requests_queue);
-    let r1_clone = r.clone();
-    pool.execute(move || loop {
-        let mut elevator_1 = Elevator::new_elevator("A".to_string(), elevator_1_current_floor);
-        if let Ok(_) = elevator_1_request_r.recv() {
-            println!(
-                "Handling Request Queue lift A: {:?}",
-                elevator_a_requests_queue
-            );
-            let mut request_queue = elevator_a_request_queue_clone_2.lock().unwrap();
-            println!(
-                "\tElevator {} handle request of person {:?}",
-                elevator_1.id,
-                request_queue
-                    .iter()
-                    .map(|r| r.person_id)
-                    .collect::<Vec<_>>()
-            );
-            let elevator_current_floor = elevator_1.handle_requests(&mut request_queue);
-            request_queue.clear();
-            elevator_1_current_floor = elevator_current_floor;
+    {
+        // Elevator 1 process request
+        let elevator_1_current_floor = Arc::new(Mutex::new(0));
+        let complete_receiving_buttons = Arc::clone(&complete_receiving_buttons);
+        let button_press_queue = Arc::clone(&button_press_queue);
+        let elevator_requests_queue = Arc::new(Mutex::new(VecDeque::new()));
+
+        let handle = {
+            let elevator_requests_queue = Arc::clone(&elevator_requests_queue);
+            let elevator_1_current_floor = Arc::clone(&elevator_1_current_floor);
+
+            scheduled_thread_pool.execute_at_fixed_rate(
+                Duration::from_millis(5),
+                Duration::from_millis(5),
+                move || {
+                    let elevator_1 = Elevator::new_elevator(
+                        "A".to_string(),
+                        *elevator_1_current_floor.lock().unwrap(),
+                    );
+                    if let Some(request_queue) =
+                        elevator_1.process_requests(&mut button_press_queue.lock().unwrap())
+                    {
+                        // println!("Requestsssssssssssss: {:?}", requests);
+
+                        let mut elevator_requests_queue = elevator_requests_queue.lock().unwrap();
+                        elevator_requests_queue.extend(request_queue);
+                        println!("Request Queue lift A: {:?}", elevator_requests_queue);
+
+                        elevator_1_request_s.send(QueueStatus::NewQueue).unwrap();
+                    } else {
+                        match *complete_receiving_buttons.lock().unwrap() {
+                            true => elevator_1_request_s.send(QueueStatus::Done).unwrap(),
+                            false => elevator_1_request_s.send(QueueStatus::Empty).unwrap(),
+                        }
+                    }
+                },
+            )
+        };
+
+        // Elevator 1 handling request
+        {
+            let elevator_requests_queue = Arc::clone(&elevator_requests_queue);
+            let elevator_1_current_floor = Arc::clone(&elevator_1_current_floor);
+
+            pool.execute(move || loop {
+                let mut elevator_1 = Elevator::new_elevator(
+                    "A".to_string(),
+                    *elevator_1_current_floor.lock().unwrap(),
+                );
+                if let Ok(queue_status) = elevator_1_request_r.recv() {
+                    match queue_status {
+                        QueueStatus::NewQueue => {
+                            println!(
+                                "Handling Request Queue lift A: {:?}",
+                                elevator_requests_queue
+                            );
+                            let mut request_queue = elevator_requests_queue.lock().unwrap();
+                            println!(
+                                "\tElevator {} handle request of person {:?}",
+                                elevator_1.id,
+                                request_queue
+                                    .iter()
+                                    .map(|r| r.person_id)
+                                    .collect::<Vec<_>>()
+                            );
+                            let elevator_current_floor =
+                                elevator_1.handle_requests(&mut request_queue);
+                            request_queue.clear();
+                            *elevator_1_current_floor.lock().unwrap() = elevator_current_floor;
+                        }
+                        // Do nothing
+                        QueueStatus::Empty => {}
+                        QueueStatus::Done => {
+                            handle.cancel();
+                            elevator_1_finish_s.send(()).unwrap();
+                            break;
+                        }
+                    }
+                }
+            });
         }
-        if elevator_a_request_queue_clone_2.lock().unwrap().is_empty() {
-            if !r1_clone.is_empty() {
-                elevator_1_finish_s.send(()).unwrap();
-                break;
-            }
-        }
-    });
+    }
 
     // Elevator 2 process requests
-    let queue_clone_2 = Arc::clone(&queue);
+    let queue_clone_2 = Arc::clone(&button_press_queue);
     let elevator_b_request_queue_clone_1 = Arc::clone(&elevator_b_requests_queue);
     let mut elevator_2_current_floor = 0;
-    sched.execute_at_fixed_rate(
+    scheduled_thread_pool.execute_at_fixed_rate(
         Duration::from_millis(5),
         Duration::from_millis(5),
         move || {
@@ -373,8 +412,11 @@ pub fn elevator_system() {
     let r3_clone = r.clone();
     // pool.join();
     loop {
+        if !(*complete_receiving_buttons.lock().unwrap()) {
+            continue;
+        }
+
         if !r3_clone.is_empty()
-            && !elevator_1_r.is_empty()
             && !elevator_2_r.is_empty()
             && !elevator_1_finish_r.is_empty()
             && !elevator_2_finish_r.is_empty()
