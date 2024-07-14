@@ -53,7 +53,7 @@ impl Elevator {
     /// Find all users to fetch.
     pub fn process_requests(
         &self,
-        queue: &mut VecDeque<ButtonPressed>,
+        mut queue: MutexGuard<VecDeque<ButtonPressed>>,
     ) -> Option<VecDeque<ButtonPressed>> {
         let mut request_queue = VecDeque::new();
 
@@ -106,11 +106,7 @@ impl Elevator {
         }
     }
 
-    pub fn move_elevator(
-        &mut self,
-        mut request_queue: VecDeque<ButtonPressed>,
-        direction: Direction,
-    ) {
+    pub fn move_elevator(&mut self, mut request_queue: Vec<ButtonPressed>, direction: Direction) {
         loop {
             let floor = match direction {
                 Direction::Up => request_queue.iter().min_by_key(|r| {
@@ -191,26 +187,30 @@ impl Elevator {
 
     pub fn handle_requests(
         &mut self,
-        request_queue: &mut MutexGuard<VecDeque<ButtonPressed>>,
+        request_queue: &VecDeque<ButtonPressed>,
+        request_queue_count: usize,
     ) -> usize {
-        let first_request = request_queue.get(0).unwrap();
-        if first_request.current_floor > first_request.target_floor {
-            self.move_elevator(request_queue.clone(), Direction::Down);
-        } else if first_request.current_floor < first_request.target_floor {
-            self.move_elevator(request_queue.clone(), Direction::Up);
+        if let Some(first_request) = request_queue.get(0) {
+            let queue = request_queue
+                .iter()
+                .take(request_queue_count)
+                .cloned()
+                .collect::<Vec<_>>();
+            let direction = if first_request.current_floor > first_request.target_floor {
+                Direction::Down
+            } else if first_request.current_floor < first_request.target_floor {
+                Direction::Up
+            } else {
+                unreachable!("Current floor cannot be equal to target floor");
+            };
+
+            self.move_elevator(queue, direction);
+        } else {
+            println!("****ERROR: handle request error, request queue is empty");
         }
 
         self.elevator_current_floor
     }
-
-    // pub fn update_status(&mut self) {
-    //     // println!("Herrreeeeeeeeeeeeeeeeeeeee");
-    //     self.status = format!(
-    //         "Elevator {} is at floor {} with status {}",
-    //         self.id, self.elevator_current_floor, self.status
-    //     );
-    //     println!("{}", self.status);
-    // }
 }
 
 pub fn elevator_system() {
@@ -267,7 +267,7 @@ pub fn elevator_system() {
     };
 
     pub enum QueueStatus {
-        NewQueue,
+        NewQueue(usize),
         Empty,
         Done,
     }
@@ -282,6 +282,7 @@ pub fn elevator_system() {
         let handle = {
             let elevator_requests_queue = Arc::clone(&elevator_requests_queue);
             let elevator_1_current_floor = Arc::clone(&elevator_1_current_floor);
+            let complete = Arc::new(Mutex::new(false));
 
             scheduled_thread_pool.execute_at_fixed_rate(
                 Duration::from_millis(5),
@@ -292,16 +293,25 @@ pub fn elevator_system() {
                         *elevator_1_current_floor.lock().unwrap(),
                     );
                     if let Some(request_queue) =
-                        elevator_1.process_requests(&mut button_press_queue.lock().unwrap())
+                        elevator_1.process_requests(button_press_queue.lock().unwrap())
                     {
                         let mut elevator_requests_queue = elevator_requests_queue.lock().unwrap();
+                        let request_queue_count = request_queue.len();
                         elevator_requests_queue.extend(request_queue);
 
-                        elevator_1_request_s.send(QueueStatus::NewQueue).unwrap();
+                        elevator_1_request_s
+                            .send(QueueStatus::NewQueue(request_queue_count))
+                            .unwrap();
                     } else {
                         match *complete_receiving_buttons.lock().unwrap() {
-                            true => elevator_1_request_s.send(QueueStatus::Done).unwrap(),
+                            true if *complete.lock().unwrap() == false => {
+                                elevator_1_request_s.send(QueueStatus::Done).unwrap();
+                                *complete.lock().unwrap() = true;
+                            }
                             false => elevator_1_request_s.send(QueueStatus::Empty).unwrap(),
+                            true => {
+                                println!("Done message already sent!");
+                            }
                         }
                     }
                 },
@@ -320,19 +330,21 @@ pub fn elevator_system() {
                 );
                 if let Ok(queue_status) = elevator_1_request_r.recv() {
                     match queue_status {
-                        QueueStatus::NewQueue => {
+                        QueueStatus::NewQueue(request_queue_count) => {
                             let mut request_queue = elevator_requests_queue.lock().unwrap();
                             println!(
                                 "\tElevator {} handle request of person {:?}",
                                 elevator_1.id,
                                 request_queue
                                     .iter()
+                                    .take(request_queue_count)
                                     .map(|r| r.person_id)
                                     .collect::<Vec<_>>()
                             );
                             let elevator_current_floor =
-                                elevator_1.handle_requests(&mut request_queue);
-                            request_queue.clear();
+                                elevator_1.handle_requests(&request_queue, request_queue_count);
+
+                            *request_queue = request_queue.split_off(request_queue_count);
                             *elevator_1_current_floor.lock().unwrap() = elevator_current_floor;
                         }
                         // Do nothing
@@ -358,6 +370,8 @@ pub fn elevator_system() {
         let handle = {
             let elevator_requests_queue = Arc::clone(&elevator_requests_queue);
             let elevator_2_current_floor = Arc::clone(&elevator_2_current_floor);
+            let complete = Arc::new(Mutex::new(false));
+
             scheduled_thread_pool.execute_at_fixed_rate(
                 Duration::from_millis(5),
                 Duration::from_millis(5),
@@ -367,16 +381,25 @@ pub fn elevator_system() {
                         *elevator_2_current_floor.lock().unwrap(),
                     );
                     if let Some(request_queue) =
-                        elevator_2.process_requests(&mut button_press_queue.lock().unwrap())
+                        elevator_2.process_requests(button_press_queue.lock().unwrap())
                     {
                         let mut elevator_requests_queue = elevator_requests_queue.lock().unwrap();
+                        let request_queue_count = request_queue.len();
                         elevator_requests_queue.extend(request_queue);
 
-                        elevator_2_request_s.send(QueueStatus::NewQueue).unwrap();
+                        elevator_2_request_s
+                            .send(QueueStatus::NewQueue(request_queue_count))
+                            .unwrap();
                     } else {
                         match *complete_receiving_buttons.lock().unwrap() {
-                            true => elevator_2_request_s.send(QueueStatus::Done).unwrap(),
+                            true if *complete.lock().unwrap() == false => {
+                                elevator_2_request_s.send(QueueStatus::Done).unwrap();
+                                *complete.lock().unwrap() = true;
+                            }
                             false => elevator_2_request_s.send(QueueStatus::Empty).unwrap(),
+                            true => {
+                                println!("Done message already sent!");
+                            }
                         }
                     }
                 },
@@ -393,8 +416,9 @@ pub fn elevator_system() {
                 );
                 if let Ok(queue_status) = elevator_2_request_r.recv() {
                     match queue_status {
-                        QueueStatus::NewQueue => {
+                        QueueStatus::NewQueue(request_queue_count) => {
                             let mut request_queue = elevator_requests_queue.lock().unwrap();
+                            println!("Elevator Request Queue: {:?}", request_queue);
                             println!(
                                 "\tElevator {} handle request of person {:?}",
                                 elevator_2.id,
@@ -404,8 +428,9 @@ pub fn elevator_system() {
                                     .collect::<Vec<_>>()
                             );
                             let elevator_current_floor =
-                                elevator_2.handle_requests(&mut request_queue);
-                            request_queue.clear();
+                                elevator_2.handle_requests(&request_queue, request_queue_count);
+
+                            *request_queue = request_queue.split_off(request_queue_count);
                             *elevator_2_current_floor.lock().unwrap() = elevator_current_floor;
                         }
                         QueueStatus::Empty => {}
