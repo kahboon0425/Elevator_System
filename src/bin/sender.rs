@@ -1,6 +1,6 @@
 use amiquip::{Connection, Exchange, Publish, Result};
 use crossbeam_channel;
-use elevator_system::{ButtonPressed, Data, Elevator, QueueStatus};
+use elevator_system::{ButtonPressed, Data, Elevator, Message, QueueStatus};
 use scheduled_thread_pool;
 use scheduled_thread_pool::ScheduledThreadPool;
 use serde::{Deserialize, Serialize};
@@ -31,14 +31,16 @@ fn main() {
             Duration::from_millis(1000),
             move || {
                 if let Some(button_pressed) = button_presses.pop_front() {
-                    // println!("Button Pressed: {:?}", button_pressed);
-                    // // serialize
-                    let serial_button_pressed = serde_json::to_string(&button_pressed).unwrap();
-                    // // send button pressed event through rabbit mq
+                    // serialize
+                    let message_type = Message::ButtonPressed(button_pressed);
+
+                    let serial_button_pressed = serde_json::to_string(&message_type).unwrap();
+                    // send button pressed event through rabbit mq
                     let _ = send_msg(serial_button_pressed);
-                    // let _ = send_msg("hello".to_string());
                 } else {
                     // *complete_receiving_buttons.lock().unwrap() = true;
+                    let message_type = Message::Complete(true);
+                    let _ = send_msg(serde_json::to_string(&message_type).unwrap());
                 }
             },
         )

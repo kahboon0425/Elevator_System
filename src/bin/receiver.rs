@@ -1,5 +1,5 @@
 use amiquip::{Connection, ConsumerMessage, ConsumerOptions, QueueDeclareOptions, Result};
-use elevator_system::ButtonPressed;
+use elevator_system::{ButtonPressed, Message};
 
 fn main() {
     let _ = receive_instructions();
@@ -25,9 +25,24 @@ fn receive_instructions() -> Result<()> {
             ConsumerMessage::Delivery(delivery) => {
                 let body = String::from_utf8_lossy(&delivery.body);
                 // println!("{}", body);
-                let deserialize_button_pressed: ButtonPressed =
-                    serde_json::from_str(&body).unwrap();
-                println!("{:?}", deserialize_button_pressed);
+
+                match serde_json::from_str::<Message>(&body) {
+                    Ok(message) => match message {
+                        Message::ButtonPressed(button) => {
+                            println!("Button pressed: {:?}", button);
+                        }
+                        Message::Complete(status) => {
+                            println!("Complete status: {}", status);
+                        }
+                    },
+                    Err(e) => {
+                        println!("Failed to deserialize message: {}", e);
+                    }
+                } // let deserialize_button_pressed: ButtonPressed =
+
+                //     serde_json::from_str(&body).unwrap();
+
+                // println!("{:?}", deserialize_button_pressed);
                 consumer.ack(delivery)?;
             }
             other => {

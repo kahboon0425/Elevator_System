@@ -6,6 +6,12 @@ pub mod simulations;
 // use simulations::scheduling_elevator_system::scheduling_elevator_system;
 
 #[derive(Debug, Serialize, Deserialize)]
+pub enum Message {
+    ButtonPressed(ButtonPressed),
+    Complete(bool),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub enum QueueStatus {
     NewQueue(usize),
     Empty,
