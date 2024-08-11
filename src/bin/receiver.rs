@@ -17,9 +17,9 @@ fn main() {
     let pool = ThreadPool::new(2);
 
     let (elevator_1_request_s, elevator_1_request_r) = channel();
-    // let (elevator_2_request_s, elevator_2_request_r) = channel();
+    let (elevator_2_request_s, elevator_2_request_r) = channel();
     let (elevator_1_finish_s, elevator_1_finish_r) = unbounded();
-    // let (elevator_2_finish_s, elevator_2_finish_r) = unbounded();
+    let (elevator_2_finish_s, elevator_2_finish_r) = unbounded();
 
     {
         let complete_receiving_buttons = Arc::clone(&complete_receiving_buttons);
@@ -89,6 +89,7 @@ fn main() {
                     "A".to_string(),
                     *elevator_1_current_floor.lock().unwrap(),
                 );
+
                 if let Ok(queue_status) = elevator_1_request_r.recv() {
                     match queue_status {
                         QueueStatus::NewQueue(request_queue_count) => {
@@ -121,8 +122,102 @@ fn main() {
         }
     }
 
-    pool.join()
+    // Elevator 2 process requests - Periodic Task
+    {
+        let elevator_2_current_floor = Arc::new(Mutex::new(0));
+        let complete_receiving_buttons = Arc::clone(&complete_receiving_buttons);
+        let button_press_queue = Arc::clone(&button_press_queue);
+        let elevator_requests_queue = Arc::new(Mutex::new(VecDeque::new()));
 
+        let handle = {
+            let elevator_requests_queue = Arc::clone(&elevator_requests_queue);
+            let elevator_2_current_floor = Arc::clone(&elevator_2_current_floor);
+            let complete = Arc::new(Mutex::new(false));
+
+            scheduled_thread_pool.execute_at_fixed_rate(
+                Duration::from_millis(5),
+                Duration::from_millis(5),
+                move || {
+                    let elevator_2 = Elevator::new_elevator(
+                        "B".to_string(),
+                        *elevator_2_current_floor.lock().unwrap(),
+                    );
+                    if let Some(request_queue) =
+                        elevator_2.process_requests(button_press_queue.lock().unwrap())
+                    {
+                        let mut elevator_requests_queue = elevator_requests_queue.lock().unwrap();
+                        let request_queue_count = request_queue.len();
+                        elevator_requests_queue.extend(request_queue);
+
+                        elevator_2_request_s
+                            .send(QueueStatus::NewQueue(request_queue_count))
+                            .unwrap();
+                    } else {
+                        match *complete_receiving_buttons.lock().unwrap() {
+                            true if *complete.lock().unwrap() == false => {
+                                elevator_2_request_s.send(QueueStatus::Done).unwrap();
+                                *complete.lock().unwrap() = true;
+                            }
+                            false => elevator_2_request_s.send(QueueStatus::Empty).unwrap(),
+                            true => {
+                                // println!("Done message already sent!");
+                            }
+                        }
+                    }
+                },
+            )
+        };
+        // Elevator 2 handling request - Aperiodic Task
+        {
+            let elevator_requests_queue = Arc::clone(&elevator_requests_queue);
+            let elevator_2_current_floor = Arc::clone(&elevator_2_current_floor);
+            pool.execute(move || loop {
+                let mut elevator_2 = Elevator::new_elevator(
+                    "B".to_string(),
+                    *elevator_2_current_floor.lock().unwrap(),
+                );
+                if let Ok(queue_status) = elevator_2_request_r.recv() {
+                    match queue_status {
+                        QueueStatus::NewQueue(request_queue_count) => {
+                            let mut request_queue = elevator_requests_queue.lock().unwrap();
+                            println!(
+                                "\tElevator {} handle request of person {:?}",
+                                elevator_2.id,
+                                request_queue
+                                    .iter()
+                                    .map(|r| r.person_id)
+                                    .collect::<Vec<_>>()
+                            );
+                            let elevator_current_floor =
+                                elevator_2.handle_requests(&request_queue, request_queue_count);
+
+                            *request_queue = request_queue.split_off(request_queue_count);
+                            *elevator_2_current_floor.lock().unwrap() = elevator_current_floor;
+                        }
+                        QueueStatus::Empty => {}
+                        QueueStatus::Done => {
+                            handle.cancel();
+                            elevator_2_finish_s.send(()).unwrap();
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    // pool.join()
+
+    loop {
+        if !(*complete_receiving_buttons.lock().unwrap()) {
+            continue;
+        } else {
+            // handle.cancel();
+            if !elevator_1_finish_r.is_empty() && !elevator_2_finish_r.is_empty() {
+                break;
+            }
+        }
+    }
     // let _ = receive_instructions(button_press_queue.clone());
 }
 
@@ -153,7 +248,7 @@ fn receive_instructions(
                 match serde_json::from_str::<Message>(&body) {
                     Ok(message) => match message {
                         Message::ButtonPressed(button_pressed) => {
-                            println!("Button pressed: {:?}", button_pressed);
+                            // println!("Button pressed: {:?}", button_pressed);
                             button_press_queue.lock().unwrap().push_back(button_pressed);
                             println!(
                                 "Person {} press lift button at floor {} to floor {} *****",
