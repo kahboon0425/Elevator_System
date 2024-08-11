@@ -21,9 +21,10 @@ fn main() {
     ]);
 
     let scheduled_thread_pool = ScheduledThreadPool::new(3);
+    let complete_receiving_buttons = Arc::new(Mutex::new(false));
 
     let handle = {
-        // let complete_receiving_buttons = Arc::clone(&complete_receiving_buttons);
+        let complete_receiving_buttons = Arc::clone(&complete_receiving_buttons);
 
         // Periodic Task
         scheduled_thread_pool.execute_at_fixed_rate(
@@ -38,14 +39,21 @@ fn main() {
                     // send button pressed event through rabbit mq
                     let _ = send_msg(serial_button_pressed);
                 } else {
-                    // *complete_receiving_buttons.lock().unwrap() = true;
                     let message_type = Message::Complete(true);
                     let _ = send_msg(serde_json::to_string(&message_type).unwrap());
+                    *complete_receiving_buttons.lock().unwrap() = true;
                 }
             },
         )
     };
-    loop {}
+
+    loop {
+        std::thread::sleep(Duration::from_secs(1));
+        if *complete_receiving_buttons.lock().unwrap() == true {
+            handle.cancel();
+            break;
+        }
+    }
 }
 
 fn send_msg(directions: String) -> Result<()> {
