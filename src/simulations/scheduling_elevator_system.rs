@@ -1,7 +1,6 @@
-extern crate crossbeam_channel;
-extern crate rand;
-extern crate scheduled_thread_pool;
+use crossbeam_channel;
 use crossbeam_channel::unbounded;
+use scheduled_thread_pool;
 use scheduled_thread_pool::ScheduledThreadPool;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -213,7 +212,7 @@ impl Elevator {
     }
 }
 
-pub fn elevator_system() {
+pub fn scheduling_elevator_system() {
     // Button pressed
     let mut button_presses = VecDeque::from(vec![
         ButtonPressed::new_request(1, 0, 5),
@@ -244,10 +243,10 @@ pub fn elevator_system() {
         let button_press_queue = Arc::clone(&button_press_queue);
         let complete_receiving_buttons = Arc::clone(&complete_receiving_buttons);
 
-        // TODO: Cancel the handle in the main thread for a graceful exit.
+        // Periodic Task
         scheduled_thread_pool.execute_at_fixed_rate(
             Duration::from_millis(0),
-            Duration::from_millis(2),
+            Duration::from_millis(3),
             move || {
                 if let Some(button_pressed) = button_presses.pop_front() {
                     // SAFETY: Must wait for button press queue to become available.
@@ -273,7 +272,7 @@ pub fn elevator_system() {
     }
 
     {
-        // Elevator 1 process request
+        // Elevator 1 process request - Periodic Task (for every 5ms it will check if there is any button request)
         let elevator_1_current_floor = Arc::new(Mutex::new(0));
         let complete_receiving_buttons = Arc::clone(&complete_receiving_buttons);
         let button_press_queue = Arc::clone(&button_press_queue);
@@ -310,7 +309,7 @@ pub fn elevator_system() {
                             }
                             false => elevator_1_request_s.send(QueueStatus::Empty).unwrap(),
                             true => {
-                                println!("Done message already sent!");
+                                // println!("Done message already sent!");
                             }
                         }
                     }
@@ -318,7 +317,7 @@ pub fn elevator_system() {
             )
         };
 
-        // Elevator 1 handling request
+        // Elevator 1 handling request - Aperiodic Task (will only execute when it receive the message)
         {
             let elevator_requests_queue = Arc::clone(&elevator_requests_queue);
             let elevator_1_current_floor = Arc::clone(&elevator_1_current_floor);
@@ -360,7 +359,7 @@ pub fn elevator_system() {
         }
     }
 
-    // Elevator 2 process requests
+    // Elevator 2 process requests - Periodic Task
     {
         let elevator_2_current_floor = Arc::new(Mutex::new(0));
         let complete_receiving_buttons = Arc::clone(&complete_receiving_buttons);
@@ -398,14 +397,14 @@ pub fn elevator_system() {
                             }
                             false => elevator_2_request_s.send(QueueStatus::Empty).unwrap(),
                             true => {
-                                println!("Done message already sent!");
+                                // println!("Done message already sent!");
                             }
                         }
                     }
                 },
             )
         };
-        // Elevator 2 handling request
+        // Elevator 2 handling request - Aperiodic Task
         {
             let elevator_requests_queue = Arc::clone(&elevator_requests_queue);
             let elevator_2_current_floor = Arc::clone(&elevator_2_current_floor);
@@ -418,7 +417,6 @@ pub fn elevator_system() {
                     match queue_status {
                         QueueStatus::NewQueue(request_queue_count) => {
                             let mut request_queue = elevator_requests_queue.lock().unwrap();
-                            println!("Elevator Request Queue: {:?}", request_queue);
                             println!(
                                 "\tElevator {} handle request of person {:?}",
                                 elevator_2.id,
@@ -455,8 +453,4 @@ pub fn elevator_system() {
             }
         }
     }
-}
-
-pub fn scheduling_elevator_system() {
-    elevator_system();
 }
