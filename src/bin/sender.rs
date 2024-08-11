@@ -29,7 +29,7 @@ fn main() {
         // Periodic Task
         scheduled_thread_pool.execute_at_fixed_rate(
             Duration::from_millis(0),
-            Duration::from_millis(3),
+            Duration::from_millis(1000),
             move || {
                 if let Some(button_pressed) = button_presses.pop_front() {
                     // serialize

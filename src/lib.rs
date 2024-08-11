@@ -1,5 +1,13 @@
+use crossbeam_channel::Sender;
+use scheduled_thread_pool::JobHandle;
 use serde::{Deserialize, Serialize};
-use std::{collections::VecDeque, sync::MutexGuard};
+use std::{
+    collections::VecDeque,
+    sync::{
+        mpsc::{self, Receiver},
+        Arc, Mutex, MutexGuard,
+    },
+};
 
 pub mod simulations;
 // use simulations::concurrency_elevator_system::concurrency_elevator_system;
@@ -228,4 +236,83 @@ impl Elevator {
 
         self.elevator_current_floor
     }
+}
+
+pub fn process_request(
+    elevator_name: &str,
+    elevator_current_floor: &Arc<Mutex<usize>>,
+    button_press_queue: &Mutex<VecDeque<ButtonPressed>>,
+    elevator_requests_queue: &Mutex<VecDeque<ButtonPressed>>,
+    elevator_request_s: &mpsc::Sender<QueueStatus>,
+    complete_receiving_buttons: &Arc<Mutex<bool>>,
+    complete: &Arc<Mutex<bool>>,
+) {
+    let elevator_1 = Elevator::new_elevator(
+        elevator_name.to_string(),
+        *elevator_current_floor.lock().unwrap(),
+    );
+    if let Some(request_queue) = elevator_1.process_requests(button_press_queue.lock().unwrap()) {
+        let mut elevator_requests_queue = elevator_requests_queue.lock().unwrap();
+        let request_queue_count = request_queue.len();
+        elevator_requests_queue.extend(request_queue);
+        // println!("Elevator A Request Queue: {:?}", elevator_requests_queue);
+
+        elevator_request_s
+            .send(QueueStatus::NewQueue(request_queue_count))
+            .unwrap();
+    } else {
+        match *complete_receiving_buttons.lock().unwrap() {
+            true => {
+                if *complete.lock().unwrap() == false {
+                    elevator_request_s.send(QueueStatus::Done).unwrap();
+                    *complete.lock().unwrap() = true;
+                } else {
+                    elevator_request_s.send(QueueStatus::Empty).unwrap()
+                }
+            }
+            false => {
+                // println!("Done message already sent!");
+            }
+        }
+    }
+}
+
+pub fn elevator_handle_request(
+    elevator_name: &str,
+    elevator_request_r: &Receiver<QueueStatus>,
+    elevator_requests_queue: &Mutex<VecDeque<ButtonPressed>>,
+    current_floor: &Arc<Mutex<usize>>,
+    elevator_2_finish_s: &crossbeam_channel::Sender<()>,
+    handle: &JobHandle,
+) -> bool {
+    let mut elevator_2 =
+        Elevator::new_elevator(elevator_name.to_string(), *current_floor.lock().unwrap());
+    if let Ok(queue_status) = elevator_request_r.recv() {
+        match queue_status {
+            QueueStatus::NewQueue(request_queue_count) => {
+                let mut request_queue = elevator_requests_queue.lock().unwrap();
+                println!(
+                    "\tElevator {} handle request of person {:?}",
+                    elevator_2.id,
+                    request_queue
+                        .iter()
+                        .map(|r| r.person_id)
+                        .collect::<Vec<_>>()
+                );
+                let elevator_current_floor =
+                    elevator_2.handle_requests(&request_queue, request_queue_count);
+
+                *request_queue = request_queue.split_off(request_queue_count);
+                *current_floor.lock().unwrap() = elevator_current_floor;
+            }
+            QueueStatus::Empty => {}
+            QueueStatus::Done => {
+                handle.cancel();
+                elevator_2_finish_s.send(()).unwrap();
+                return true;
+            }
+        }
+    }
+
+    false
 }
