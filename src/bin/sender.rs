@@ -1,14 +1,13 @@
 use amiquip::{Connection, Exchange, Publish, Result};
-use crossbeam_channel;
-use elevator_system::{ButtonPressed, Data, Elevator, Message, QueueStatus};
+use elevator_system::{ButtonPressed, Message};
+use rand::Rng;
 use scheduled_thread_pool;
 use scheduled_thread_pool::ScheduledThreadPool;
-use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::{collections::VecDeque, time::Duration};
 
 fn main() {
-    let scheduled_thread_pool = ScheduledThreadPool::new(3);
     // Button pressed
     let mut button_presses = VecDeque::from(vec![
         ButtonPressed::new_request(1, 0, 5),
@@ -20,7 +19,7 @@ fn main() {
         ButtonPressed::new_request(7, 5, 2),
     ]);
 
-    let scheduled_thread_pool = ScheduledThreadPool::new(3);
+    let scheduled_thread_pool = ScheduledThreadPool::new(1);
     let complete_receiving_buttons = Arc::new(Mutex::new(false));
 
     let handle = {
@@ -29,7 +28,7 @@ fn main() {
         // Periodic Task
         scheduled_thread_pool.execute_at_fixed_rate(
             Duration::from_millis(0),
-            Duration::from_millis(1000),
+            Duration::from_millis(3),
             move || {
                 if let Some(button_pressed) = button_presses.pop_front() {
                     // serialize
@@ -38,7 +37,7 @@ fn main() {
                     let serial_button_pressed = serde_json::to_string(&message_type).unwrap();
                     // send button pressed event through rabbit mq
                     let _ = send_msg(serial_button_pressed);
-                } else {
+                } else if *complete_receiving_buttons.lock().unwrap() == false {
                     let message_type = Message::Complete(true);
                     let _ = send_msg(serde_json::to_string(&message_type).unwrap());
                     *complete_receiving_buttons.lock().unwrap() = true;

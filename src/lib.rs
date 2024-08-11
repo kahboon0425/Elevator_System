@@ -1,4 +1,3 @@
-use crossbeam_channel::Sender;
 use scheduled_thread_pool::JobHandle;
 use serde::{Deserialize, Serialize};
 use std::{

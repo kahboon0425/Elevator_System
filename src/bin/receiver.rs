@@ -1,14 +1,12 @@
 use std::{
     collections::VecDeque,
-    sync::{mpsc::channel, Arc, Mutex, MutexGuard},
+    sync::{mpsc::channel, Arc, Mutex},
     time::Duration,
 };
 
 use amiquip::{Connection, ConsumerMessage, ConsumerOptions, QueueDeclareOptions, Result};
 use crossbeam_channel::unbounded;
-use elevator_system::{
-    elevator_handle_request, process_request, ButtonPressed, Elevator, Message, QueueStatus,
-};
+use elevator_system::{elevator_handle_request, process_request, ButtonPressed, Message};
 use scheduled_thread_pool::ScheduledThreadPool;
 use threadpool::ThreadPool;
 
@@ -57,36 +55,6 @@ fn main() {
                         &complete_receiving_buttons,
                         &complete,
                     );
-                    // let elevator_1 = Elevator::new_elevator(
-                    //     "A".to_string(),
-                    //     *elevator_1_current_floor.lock().unwrap(),
-                    // );
-                    // if let Some(request_queue) =
-                    //     elevator_1.process_requests(button_press_queue.lock().unwrap())
-                    // {
-                    //     let mut elevator_requests_queue = elevator_requests_queue.lock().unwrap();
-                    //     let request_queue_count = request_queue.len();
-                    //     elevator_requests_queue.extend(request_queue);
-                    //     // println!("Elevator A Request Queue: {:?}", elevator_requests_queue);
-
-                    //     elevator_1_request_s
-                    //         .send(QueueStatus::NewQueue(request_queue_count))
-                    //         .unwrap();
-                    // } else {
-                    //     match *complete_receiving_buttons.lock().unwrap() {
-                    //         true => {
-                    //             if *complete.lock().unwrap() == false {
-                    //                 elevator_1_request_s.send(QueueStatus::Done).unwrap();
-                    //                 *complete.lock().unwrap() = true;
-                    //             } else {
-                    //                 elevator_1_request_s.send(QueueStatus::Empty).unwrap()
-                    //             }
-                    //         }
-                    //         false => {
-                    //             // println!("Done message already sent!");
-                    //         }
-                    //     }
-                    // }
                 },
             )
         };
@@ -108,39 +76,6 @@ fn main() {
                     // QueueStatus is done.
                     break;
                 }
-                // let mut elevator_1 = Elevator::new_elevator(
-                //     "A".to_string(),
-                //     *elevator_1_current_floor.lock().unwrap(),
-                // );
-
-                // if let Ok(queue_status) = elevator_1_request_r.recv() {
-                //     match queue_status {
-                //         QueueStatus::NewQueue(request_queue_count) => {
-                //             let mut request_queue = elevator_requests_queue.lock().unwrap();
-                //             println!(
-                //                 "\tElevator {} handle request of person {:?}",
-                //                 elevator_1.id,
-                //                 request_queue
-                //                     .iter()
-                //                     .take(request_queue_count)
-                //                     .map(|r| r.person_id)
-                //                     .collect::<Vec<_>>()
-                //             );
-                //             let elevator_current_floor =
-                //                 elevator_1.handle_requests(&request_queue, request_queue_count);
-
-                //             *request_queue = request_queue.split_off(request_queue_count);
-                //             *elevator_1_current_floor.lock().unwrap() = elevator_current_floor;
-                //         }
-                //         // Do nothing
-                //         QueueStatus::Empty => {}
-                //         QueueStatus::Done => {
-                //             handle.cancel();
-                //             elevator_1_finish_s.send(()).unwrap();
-                //             break;
-                //         }
-                //     }
-                // }
             });
         }
     }
@@ -171,33 +106,6 @@ fn main() {
                         &complete_receiving_buttons,
                         &complete,
                     );
-
-                    // let elevator_2 = Elevator::new_elevator(
-                    //     "B".to_string(),
-                    //     *elevator_2_current_floor.lock().unwrap(),
-                    // );
-                    // if let Some(request_queue) =
-                    //     elevator_2.process_requests(button_press_queue.lock().unwrap())
-                    // {
-                    //     let mut elevator_requests_queue = elevator_requests_queue.lock().unwrap();
-                    //     let request_queue_count = request_queue.len();
-                    //     elevator_requests_queue.extend(request_queue);
-
-                    //     elevator_2_request_s
-                    //         .send(QueueStatus::NewQueue(request_queue_count))
-                    //         .unwrap();
-                    // } else {
-                    //     match *complete_receiving_buttons.lock().unwrap() {
-                    //         true if *complete.lock().unwrap() == false => {
-                    //             elevator_2_request_s.send(QueueStatus::Done).unwrap();
-                    //             *complete.lock().unwrap() = true;
-                    //         }
-                    //         false => elevator_2_request_s.send(QueueStatus::Empty).unwrap(),
-                    //         true => {
-                    //             // println!("Done message already sent!");
-                    //         }
-                    //     }
-                    // }
                 },
             )
         };
@@ -217,36 +125,6 @@ fn main() {
                     // QueueStatus is done.
                     break;
                 }
-                // let mut elevator_2 = Elevator::new_elevator(
-                //     "B".to_string(),
-                //     *elevator_2_current_floor.lock().unwrap(),
-                // );
-                // if let Ok(queue_status) = elevator_2_request_r.recv() {
-                //     match queue_status {
-                //         QueueStatus::NewQueue(request_queue_count) => {
-                //             let mut request_queue = elevator_requests_queue.lock().unwrap();
-                //             println!(
-                //                 "\tElevator {} handle request of person {:?}",
-                //                 elevator_2.id,
-                //                 request_queue
-                //                     .iter()
-                //                     .map(|r| r.person_id)
-                //                     .collect::<Vec<_>>()
-                //             );
-                //             let elevator_current_floor =
-                //                 elevator_2.handle_requests(&request_queue, request_queue_count);
-
-                //             *request_queue = request_queue.split_off(request_queue_count);
-                //             *elevator_2_current_floor.lock().unwrap() = elevator_current_floor;
-                //         }
-                //         QueueStatus::Empty => {}
-                //         QueueStatus::Done => {
-                //             handle.cancel();
-                //             elevator_2_finish_s.send(()).unwrap();
-                //             break;
-                //         }
-                //     }
-                // }
             });
         }
     }
@@ -263,7 +141,6 @@ fn main() {
             }
         }
     }
-    // let _ = receive_instructions(button_press_queue.clone());
 }
 
 fn receive_instructions(
@@ -303,7 +180,7 @@ fn receive_instructions(
                             );
                         }
                         Message::Complete(status) => {
-                            // println!("Complete status: {}", status);
+                            // println!("Receive Complete!!!!!!!!!!!!!!!!!!!");
                             *complete_receiving_buttons.lock().unwrap() = true;
                         }
                     },
