@@ -15,6 +15,7 @@ fn main() {
     let complete_receiving_buttons = Arc::new(Mutex::new(false));
     let scheduled_thread_pool = ScheduledThreadPool::new(3);
     let pool = ThreadPool::new(2);
+    let elevator_under_maintenence = Arc::new(Mutex::new(String::new()));
 
     let (elevator_1_request_s, elevator_1_request_r) = channel();
     let (elevator_2_request_s, elevator_2_request_r) = channel();
@@ -24,8 +25,13 @@ fn main() {
     {
         let complete_receiving_buttons = Arc::clone(&complete_receiving_buttons);
         let button_press_queue = Arc::clone(&button_press_queue);
+        let elevator_under_maintenence = Arc::clone(&elevator_under_maintenence);
         pool.execute(move || loop {
-            let _ = receive_instructions(&button_press_queue, &complete_receiving_buttons);
+            let _ = receive_instructions(
+                &button_press_queue,
+                &complete_receiving_buttons,
+                &elevator_under_maintenence,
+            );
         });
     }
 
@@ -36,6 +42,7 @@ fn main() {
         let button_press_queue = Arc::clone(&button_press_queue);
         let elevator_requests_queue = Arc::new(Mutex::new(VecDeque::new()));
         let complete_receiving_buttons = Arc::clone(&complete_receiving_buttons);
+        let elevator_under_maintenence = Arc::clone(&elevator_under_maintenence);
 
         let handle = {
             let elevator_requests_queue = Arc::clone(&elevator_requests_queue);
@@ -46,6 +53,12 @@ fn main() {
                 Duration::from_millis(5),
                 Duration::from_millis(5),
                 move || {
+                    if *elevator_under_maintenence.lock().unwrap() == elevator_name {
+                        elevator_1_request_s
+                            .send(elevator_system::QueueStatus::Done)
+                            .unwrap();
+                        return;
+                    }
                     process_request(
                         &elevator_name,
                         &elevator_1_current_floor,
@@ -79,8 +92,8 @@ fn main() {
             });
         }
     }
-
     // Elevator 2 process requests - Periodic Task
+
     {
         let elevator_name = "B";
         let elevator_2_current_floor = Arc::new(Mutex::new(0));
@@ -97,6 +110,12 @@ fn main() {
                 Duration::from_millis(5),
                 Duration::from_millis(5),
                 move || {
+                    if *elevator_under_maintenence.lock().unwrap() == elevator_name {
+                        elevator_2_request_s
+                            .send(elevator_system::QueueStatus::Done)
+                            .unwrap();
+                        return;
+                    }
                     process_request(
                         &elevator_name,
                         &elevator_2_current_floor,
@@ -132,11 +151,11 @@ fn main() {
     // pool.join()
 
     loop {
-        if !(*complete_receiving_buttons.lock().unwrap()) {
+        if *complete_receiving_buttons.lock().unwrap() == false {
             continue;
         } else {
             // handle.cancel();
-            if !elevator_1_finish_r.is_empty() && !elevator_2_finish_r.is_empty() {
+            if elevator_1_finish_r.is_empty() == false && elevator_2_finish_r.is_empty() == false {
                 break;
             }
         }
@@ -146,6 +165,7 @@ fn main() {
 fn receive_instructions(
     button_press_queue: &Mutex<VecDeque<ButtonPressed>>,
     complete_receiving_buttons: &Mutex<bool>,
+    elevator_under_maintenance: &Mutex<String>,
 ) -> Result<()> {
     // Open connection.
     let mut connection: Connection =
@@ -172,20 +192,21 @@ fn receive_instructions(
                         Message::ButtonPressed(button_pressed) => {
                             // println!("Button pressed: {:?}", button_pressed);
                             button_press_queue.lock().unwrap().push_back(button_pressed);
-                            println!(
-                                "Person {} press lift button at floor {} to floor {} *****",
-                                button_pressed.person_id,
-                                button_pressed.current_floor,
-                                button_pressed.target_floor
-                            );
                         }
                         Message::Complete(status) => {
                             // println!("Receive Complete!!!!!!!!!!!!!!!!!!!");
                             *complete_receiving_buttons.lock().unwrap() = true;
                         }
+                        Message::ElevatorUnderMaintenance(elevator_under_maintain) => {
+                            println!(
+                                "Elevator_under_maintainnnnnnnnnnnnnnnnn: {}",
+                                elevator_under_maintain
+                            );
+                            *elevator_under_maintenance.lock().unwrap() = elevator_under_maintain;
+                        }
                     },
-                    Err(e) => {
-                        println!("Failed to deserialize message: {}", e);
+                    Err(_) => {
+                        // println!("Failed to deserialize message: {}", e);
                     }
                 }
 

@@ -15,7 +15,15 @@ pub mod simulations;
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Message {
     ButtonPressed(ButtonPressed),
+    ElevatorUnderMaintenance(String),
     Complete(bool),
+}
+
+#[derive(Debug)]
+pub enum ElevatorEvent {
+    Maintenance(String),
+    ButtonPress(ButtonPressed),
+    Complete,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

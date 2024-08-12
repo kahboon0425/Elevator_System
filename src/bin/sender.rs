@@ -1,11 +1,11 @@
 use amiquip::{Connection, Exchange, Publish, Result};
-use elevator_system::{ButtonPressed, Message};
+use elevator_system::{ButtonPressed, ElevatorEvent, Message};
 use rand::Rng;
-use scheduled_thread_pool;
-use scheduled_thread_pool::ScheduledThreadPool;
+use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::{collections::VecDeque, time::Duration};
+use threadpool::ThreadPool;
 
 fn main() {
     // Button pressed
@@ -19,54 +19,123 @@ fn main() {
         ButtonPressed::new_request(7, 5, 2),
     ]);
 
-    let scheduled_thread_pool = ScheduledThreadPool::new(1);
+    // let scheduled_thread_pool = ScheduledThreadPool::new(1);
+    let pool = ThreadPool::new(2);
     let complete_receiving_buttons = Arc::new(Mutex::new(false));
+    let (event_sender, event_receiver) = channel();
 
-    let handle = {
-        let complete_receiving_buttons = Arc::clone(&complete_receiving_buttons);
+    {
+        // Elevator Maintenance Event
+        let event_sender = event_sender.clone();
+        pool.execute(move || {
+            let mut rng = rand::thread_rng();
+            let random_num = rng.gen_range(1..3);
 
-        // Periodic Task
-        scheduled_thread_pool.execute_at_fixed_rate(
-            Duration::from_millis(0),
-            Duration::from_millis(3),
-            move || {
-                if let Some(button_pressed) = button_presses.pop_front() {
-                    // serialize
-                    let message_type = Message::ButtonPressed(button_pressed);
+            let mut elevator_chosen = "";
 
-                    let serial_button_pressed = serde_json::to_string(&message_type).unwrap();
-                    // send button pressed event through rabbit mq
-                    let _ = send_msg(serial_button_pressed);
-                } else if *complete_receiving_buttons.lock().unwrap() == false {
-                    let message_type = Message::Complete(true);
-                    let _ = send_msg(serde_json::to_string(&message_type).unwrap());
-                    *complete_receiving_buttons.lock().unwrap() = true;
-                }
-            },
-        )
+            if random_num == 1 {
+                elevator_chosen = "A"
+            } else if random_num == 2 {
+                elevator_chosen = "B"
+            }
+
+            let random_time = rng.gen_range(5..10);
+            println!("Random Broken Time: {}", random_time);
+
+            thread::sleep(Duration::from_millis(random_time * 10));
+
+            println!("Elevator {} broken:", elevator_chosen);
+
+            event_sender
+                .send(ElevatorEvent::Maintenance(elevator_chosen.to_string()))
+                .unwrap();
+        })
+    }
+
+    {
+        // Button Press Event
+        let event_sender = event_sender.clone();
+
+        pool.execute(move || loop {
+            if let Some(button_pressed) = button_presses.pop_front() {
+                let mut rng = rand::thread_rng();
+                let people_arrival_time = rng.gen_range(1..8);
+                thread::sleep(Duration::from_millis(people_arrival_time * 10));
+
+                event_sender
+                    .send(ElevatorEvent::ButtonPress(button_pressed))
+                    .unwrap();
+            } else {
+                event_sender.send(ElevatorEvent::Complete).unwrap();
+                break;
+            }
+        })
     };
 
-    loop {
-        std::thread::sleep(Duration::from_secs(1));
-        if *complete_receiving_buttons.lock().unwrap() == true {
-            handle.cancel();
-            break;
-        }
+    // Elevator Controller
+    {
+        pool.execute(move || loop {
+            match event_receiver.recv() {
+                Ok(event) => {
+                    match event {
+                        ElevatorEvent::Maintenance(elevator) => {
+                            println!(
+                                "Elevator Controller: Elevator {} Entering maintenance mode.",
+                                elevator
+                            );
+                            let message_type = Message::ElevatorUnderMaintenance(elevator);
+                            let serial_maintenance_elevator =
+                                serde_json::to_string(&message_type).unwrap();
+
+                            // Send maintanence event through RabbitMQ
+                            let _ = send_msg(serial_maintenance_elevator);
+                        }
+                        ElevatorEvent::ButtonPress(button_pressed) => {
+                            // serialize
+                            let message_type = Message::ButtonPressed(button_pressed);
+                            println!(
+                                "Person {} press lift button at floor {} to floor {} *****",
+                                button_pressed.person_id,
+                                button_pressed.current_floor,
+                                button_pressed.target_floor
+                            );
+
+                            let serial_button_pressed =
+                                serde_json::to_string(&message_type).unwrap();
+
+                            // Send button pressed event through RabbitMQ
+                            let _ = send_msg(serial_button_pressed);
+                        }
+                        ElevatorEvent::Complete => {
+                            println!("Elevator Controller: Done...");
+                            let message_type = Message::Complete(true);
+                            let _ = send_msg(serde_json::to_string(&message_type).unwrap());
+                            break;
+                        }
+                    }
+                }
+                Err(_) => println!("Nothing yet..."),
+            }
+        });
     }
+
+    // loop {
+    //     if *complete_receiving_buttons.lock().unwrap() == true {
+    //         // handle.cancel();
+    //         break;
+    //     }
+    // }
+    pool.join();
 }
 
-fn send_msg(directions: String) -> Result<()> {
-    // Open connection.
+fn send_msg(button_pressed: String) -> Result<()> {
     let mut connection = Connection::insecure_open("amqp://guest:guest@localhost:5672")?;
 
-    // Open a channel - None says let the library choose the channel ID.
     let channel = connection.open_channel(None)?;
 
-    // Get a handle to the direct exchange on our channel.
     let exchange = Exchange::direct(&channel);
 
-    // Publish a message to the "hello" queue.
-    exchange.publish(Publish::new(directions.as_bytes(), "hello"))?;
+    exchange.publish(Publish::new(button_pressed.as_bytes(), "hello"))?;
 
     connection.close()
 }
