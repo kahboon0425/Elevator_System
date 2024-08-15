@@ -1,6 +1,7 @@
 use scheduled_thread_pool::JobHandle;
 use serde::{Deserialize, Serialize};
 use std::{
+    cmp::Ordering,
     collections::VecDeque,
     sync::{
         mpsc::{self, Receiver},
@@ -36,7 +37,6 @@ pub enum QueueStatus {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Data {
     pub queue_status: QueueStatus,
-    // elevator_requests_queue: VecDeque<ButtonPressed>,
     pub elevator_current_floor: usize,
 }
 
@@ -164,20 +164,23 @@ impl Elevator {
                     request.current_floor
                 };
 
-                if self.elevator_current_floor < target_floor {
-                    println!(
-                        "\tElevator {} move up and stopped at floor {}",
-                        self.id, target_floor
-                    );
-                } else if self.elevator_current_floor > target_floor {
-                    println!(
-                        "\tElevator {} move down and stopped at floor {}",
-                        self.id, target_floor
-                    );
-                } else {
-                    println!("\tElevator {} stopped at floor {}", self.id, target_floor);
+                match self.elevator_current_floor.cmp(&target_floor) {
+                    Ordering::Less => {
+                        println!(
+                            "\tElevator {} move up and stopped at floor {}",
+                            self.id, target_floor
+                        );
+                    }
+                    Ordering::Greater => {
+                        println!(
+                            "\tElevator {} move down and stopped at floor {}",
+                            self.id, target_floor
+                        );
+                    }
+                    Ordering::Equal => {
+                        println!("\tElevator {} stopped at floor {}", self.id, target_floor);
+                    }
                 }
-
                 // Get all the people that want to enter the lift
                 request_queue
                     .iter_mut()
@@ -209,7 +212,6 @@ impl Elevator {
                     );
                     request_queue.remove(idx - i);
                 }
-
                 self.elevator_current_floor = target_floor;
             } else {
                 break;
@@ -222,18 +224,17 @@ impl Elevator {
         request_queue: &VecDeque<ButtonPressed>,
         request_queue_count: usize,
     ) -> usize {
-        if let Some(first_request) = request_queue.get(0) {
+        if let Some(first_request) = request_queue.front() {
             let queue = request_queue
                 .iter()
                 .take(request_queue_count)
                 .cloned()
                 .collect::<Vec<_>>();
-            let direction = if first_request.current_floor > first_request.target_floor {
-                Direction::Down
-            } else if first_request.current_floor < first_request.target_floor {
-                Direction::Up
-            } else {
-                unreachable!("Current floor cannot be equal to target floor");
+
+            let direction = match first_request.current_floor.cmp(&first_request.target_floor) {
+                Ordering::Greater => Direction::Down,
+                Ordering::Less => Direction::Up,
+                Ordering::Equal => unreachable!("Current floor cannot be equal to target floor"),
             };
 
             self.move_elevator(queue, direction);
@@ -245,7 +246,7 @@ impl Elevator {
     }
 }
 
-pub fn process_request(
+pub fn elevator_process_request(
     elevator_name: &str,
     elevator_current_floor: &Arc<Mutex<usize>>,
     button_press_queue: &Mutex<VecDeque<ButtonPressed>>,
@@ -254,15 +255,14 @@ pub fn process_request(
     complete_receiving_buttons: &Arc<Mutex<bool>>,
     complete: &Arc<Mutex<bool>>,
 ) {
-    let elevator_1 = Elevator::new_elevator(
+    let elevator = Elevator::new_elevator(
         elevator_name.to_string(),
         *elevator_current_floor.lock().unwrap(),
     );
-    if let Some(request_queue) = elevator_1.process_requests(button_press_queue.lock().unwrap()) {
+    if let Some(request_queue) = elevator.process_requests(button_press_queue.lock().unwrap()) {
         let mut elevator_requests_queue = elevator_requests_queue.lock().unwrap();
         let request_queue_count = request_queue.len();
         elevator_requests_queue.extend(request_queue);
-        // println!("Elevator A Request Queue: {:?}", elevator_requests_queue);
 
         elevator_request_s
             .send(QueueStatus::NewQueue(request_queue_count))
@@ -270,7 +270,7 @@ pub fn process_request(
     } else {
         match *complete_receiving_buttons.lock().unwrap() {
             true => {
-                if *complete.lock().unwrap() == false {
+                if !(*complete.lock().unwrap()) {
                     elevator_request_s.send(QueueStatus::Done).unwrap();
                     *complete.lock().unwrap() = true;
                 } else {
@@ -292,7 +292,7 @@ pub fn elevator_handle_request(
     elevator_2_finish_s: &crossbeam_channel::Sender<()>,
     handle: &JobHandle,
 ) -> bool {
-    let mut elevator_2 =
+    let mut elevator =
         Elevator::new_elevator(elevator_name.to_string(), *current_floor.lock().unwrap());
     if let Ok(queue_status) = elevator_request_r.recv() {
         match queue_status {
@@ -300,14 +300,14 @@ pub fn elevator_handle_request(
                 let mut request_queue = elevator_requests_queue.lock().unwrap();
                 println!(
                     "\tElevator {} handle request of person {:?}",
-                    elevator_2.id,
+                    elevator.id,
                     request_queue
                         .iter()
                         .map(|r| r.person_id)
                         .collect::<Vec<_>>()
                 );
                 let elevator_current_floor =
-                    elevator_2.handle_requests(&request_queue, request_queue_count);
+                    elevator.handle_requests(&request_queue, request_queue_count);
 
                 *request_queue = request_queue.split_off(request_queue_count);
                 *current_floor.lock().unwrap() = elevator_current_floor;

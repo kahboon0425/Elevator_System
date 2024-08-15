@@ -2,6 +2,7 @@ extern crate threadpool;
 use bma_benchmark::benchmark;
 use crossbeam_channel::unbounded;
 use peak_alloc::PeakAlloc;
+use rand::Rng;
 use std::hint::black_box;
 use std::{
     collections::VecDeque,
@@ -210,91 +211,91 @@ pub fn elevator_system() {
     let queue = Arc::new(Mutex::new(VecDeque::new()));
 
     // sender, receiver
-    let (button_pressed_s, button_pressed_r) = channel();
-    let (s, r) = unbounded();
+    let (sender, receiver) = unbounded();
 
-    let pool = ThreadPool::new(4);
+    let pool = ThreadPool::new(3);
 
-    // thread for sending request
-    pool.execute(move || {
-        let button_pressed = [
-            ButtonPressed::new_request(1, 0, 5),
-            ButtonPressed::new_request(2, 1, 4),
-            ButtonPressed::new_request(3, 1, 3),
-            ButtonPressed::new_request(4, 2, 6),
-            ButtonPressed::new_request(5, 2, 0),
-            ButtonPressed::new_request(6, 5, 3),
-            ButtonPressed::new_request(7, 5, 2),
-        ];
+    let mut button_presses = VecDeque::from(vec![
+        ButtonPressed::new_request(1, 0, 5),
+        ButtonPressed::new_request(2, 1, 4),
+        ButtonPressed::new_request(3, 1, 3),
+        ButtonPressed::new_request(4, 2, 6),
+        ButtonPressed::new_request(5, 2, 0),
+        ButtonPressed::new_request(6, 5, 3),
+        ButtonPressed::new_request(7, 5, 2),
+    ]);
+    {
+        let queue_clone = Arc::clone(&queue);
+        pool.execute(move || loop {
+            if let Some(request) = button_presses.pop_front() {
+                let mut queue = queue_clone.lock().unwrap();
+                queue.push_back(request);
+                println!(
+                    "Person {} press lift button at floor {} to floor {} *****",
+                    request.person_id, request.current_floor, request.target_floor
+                );
 
-        for sequence in button_pressed {
-            button_pressed_s.send(sequence).unwrap();
-            thread::sleep(Duration::from_millis(2));
-        }
-    });
-
-    // thread for receiving request
-    let queue_clone_1 = Arc::clone(&queue);
-    pool.execute(move || {
-        while let Ok(sequence) = button_pressed_r.recv() {
-            let mut queue = queue_clone_1.lock().unwrap();
-            queue.push_back(sequence);
-            println!(
-                "Person {} press lift button at floor {} to floor {} *****",
-                sequence.person_id, sequence.current_floor, sequence.target_floor
-            );
-        }
-        // Tell when finished
-        s.send(()).unwrap();
-    });
-
-    // elevator 1
-    let queue_clone_2 = queue.clone();
-    let r1_clone = r.clone();
-    let mut elevator_1_current_floor = 0;
-    pool.execute(move || loop {
-        let mut elevator_1 = Elevator::new_elevator("A".to_string(), elevator_1_current_floor);
-        thread::sleep(Duration::from_millis(5));
-        if let Some(requests) = elevator_1.process_requests(&queue_clone_2) {
-            println!(
-                "\tElevator {} handle request of person {:?}",
-                elevator_1.id,
-                requests.iter().map(|r| r.person_id).collect::<Vec<_>>()
-            );
-            let elevator_current_floor = elevator_1.handle_requests(requests);
-            elevator_1_current_floor = elevator_current_floor;
-        }
-        if queue_clone_2.lock().unwrap().is_empty() {
-            if !r1_clone.is_empty() {
+                // Generate people arrive at random time
+                let mut rng = rand::thread_rng();
+                let people_arrival_time = rng.gen_range(8..12);
+                thread::sleep(Duration::from_millis(people_arrival_time * 10));
+            } else {
+                sender.send(()).unwrap();
                 break;
             }
-        }
-    });
+        });
+    }
 
-    // elevator 2
-    let queue_clone_3 = queue.clone();
-    let r2_clone = r.clone();
-    let mut elevator_2_current_floor = 0;
-    pool.execute(move || loop {
-        let mut elevator_2 = Elevator::new_elevator("B".to_string(), elevator_2_current_floor);
-        thread::sleep(Duration::from_millis(5));
-        if let Some(requests) = elevator_2.process_requests(&queue_clone_3) {
-            println!(
-                "\tElevator {} handle request of person {:?}",
-                elevator_2.id,
-                requests.iter().map(|r| r.person_id).collect::<Vec<_>>()
-            );
-            let elevator_current_floor = elevator_2.handle_requests(requests);
-            elevator_2_current_floor = elevator_current_floor;
-        }
-
-        if queue_clone_3.lock().unwrap().is_empty() {
-            if !r2_clone.is_empty() {
-                break;
+    {
+        // elevator 1
+        let queue_clone = queue.clone();
+        let receiver_clone = receiver.clone();
+        let mut elevator_1_current_floor = 0;
+        pool.execute(move || loop {
+            let mut elevator_1 = Elevator::new_elevator("A".to_string(), elevator_1_current_floor);
+            // thread::sleep(Duration::from_millis(5));
+            if let Some(requests) = elevator_1.process_requests(&queue_clone) {
+                println!(
+                    "\tElevator {} handle request of person {:?}",
+                    elevator_1.id,
+                    requests.iter().map(|r| r.person_id).collect::<Vec<_>>()
+                );
+                let elevator_current_floor = elevator_1.handle_requests(requests);
+                elevator_1_current_floor = elevator_current_floor;
             }
-        }
-    });
+            if queue_clone.lock().unwrap().is_empty() {
+                if !receiver_clone.is_empty() {
+                    break;
+                }
+            }
+        });
+    }
 
+    {
+        // elevator 2
+        let queue_clone = queue.clone();
+        let receiver_clone = receiver.clone();
+        let mut elevator_2_current_floor = 0;
+        pool.execute(move || loop {
+            let mut elevator_2 = Elevator::new_elevator("B".to_string(), elevator_2_current_floor);
+            // thread::sleep(Duration::from_millis(5));
+            if let Some(requests) = elevator_2.process_requests(&queue_clone) {
+                println!(
+                    "\tElevator {} handle request of person {:?}",
+                    elevator_2.id,
+                    requests.iter().map(|r| r.person_id).collect::<Vec<_>>()
+                );
+                let elevator_current_floor = elevator_2.handle_requests(requests);
+                elevator_2_current_floor = elevator_current_floor;
+            }
+
+            if queue_clone.lock().unwrap().is_empty() {
+                if !receiver_clone.is_empty() {
+                    break;
+                }
+            }
+        });
+    }
     pool.join();
 }
 

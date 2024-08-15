@@ -1,9 +1,11 @@
 use crossbeam_channel;
 use crossbeam_channel::unbounded;
+use rand::Rng;
 use scheduled_thread_pool;
 use scheduled_thread_pool::ScheduledThreadPool;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::thread;
 use std::{collections::VecDeque, time::Duration};
 use threadpool::ThreadPool;
 
@@ -233,36 +235,37 @@ pub fn scheduling_elevator_system() {
     let (elevator_1_finish_s, elevator_1_finish_r) = unbounded();
     let (elevator_2_finish_s, elevator_2_finish_r) = unbounded();
 
-    let scheduled_thread_pool = ScheduledThreadPool::new(3);
-    let pool = ThreadPool::new(2);
+    let scheduled_thread_pool = ScheduledThreadPool::new(2);
+    let pool = ThreadPool::new(3);
 
     let complete_receiving_buttons = Arc::new(Mutex::new(false));
 
-    let handle = {
+    {
         // Thread for receiving button request
         let button_press_queue = Arc::clone(&button_press_queue);
         let complete_receiving_buttons = Arc::clone(&complete_receiving_buttons);
 
-        // Periodic Task
-        scheduled_thread_pool.execute_at_fixed_rate(
-            Duration::from_millis(0),
-            Duration::from_millis(3),
-            move || {
-                if let Some(button_pressed) = button_presses.pop_front() {
-                    // SAFETY: Must wait for button press queue to become available.
-                    let mut button_press_queue = button_press_queue.lock().unwrap();
-                    button_press_queue.push_back(button_pressed);
-                    println!(
-                        "Person {} press lift button at floor {} to floor {} *****",
-                        button_pressed.person_id,
-                        button_pressed.current_floor,
-                        button_pressed.target_floor
-                    );
-                } else {
-                    *complete_receiving_buttons.lock().unwrap() = true;
-                }
-            },
-        )
+        pool.execute(move || loop {
+            if let Some(button_pressed) = button_presses.pop_front() {
+                // SAFETY: Must wait for button press queue to become available.
+                let mut button_press_queue = button_press_queue.lock().unwrap();
+                button_press_queue.push_back(button_pressed);
+                println!(
+                    "Person {} press lift button at floor {} to floor {} *****",
+                    button_pressed.person_id,
+                    button_pressed.current_floor,
+                    button_pressed.target_floor
+                );
+
+                // Generate people arrive at random time
+                let mut rng = rand::thread_rng();
+                let people_arrival_time = rng.gen_range(10..12);
+                thread::sleep(Duration::from_millis(people_arrival_time * 100));
+            } else {
+                *complete_receiving_buttons.lock().unwrap() = true;
+                break;
+            }
+        })
     };
 
     pub enum QueueStatus {
@@ -284,8 +287,8 @@ pub fn scheduling_elevator_system() {
             let complete = Arc::new(Mutex::new(false));
 
             scheduled_thread_pool.execute_at_fixed_rate(
-                Duration::from_millis(5),
-                Duration::from_millis(5),
+                Duration::from_millis(0),
+                Duration::from_millis(10),
                 move || {
                     let elevator_1 = Elevator::new_elevator(
                         "A".to_string(),
@@ -372,8 +375,8 @@ pub fn scheduling_elevator_system() {
             let complete = Arc::new(Mutex::new(false));
 
             scheduled_thread_pool.execute_at_fixed_rate(
-                Duration::from_millis(5),
-                Duration::from_millis(5),
+                Duration::from_millis(0),
+                Duration::from_millis(10),
                 move || {
                     let elevator_2 = Elevator::new_elevator(
                         "B".to_string(),
@@ -447,7 +450,7 @@ pub fn scheduling_elevator_system() {
         if !(*complete_receiving_buttons.lock().unwrap()) {
             continue;
         } else {
-            handle.cancel();
+            // handle.cancel();
             if !elevator_1_finish_r.is_empty() && !elevator_2_finish_r.is_empty() {
                 break;
             }
