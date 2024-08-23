@@ -12,8 +12,8 @@ use std::{
 };
 use threadpool::ThreadPool;
 
-#[global_allocator]
-static PEAK_ALLOC: PeakAlloc = PeakAlloc;
+// #[global_allocator]
+// static PEAK_ALLOC: PeakAlloc = PeakAlloc;
 
 pub struct Elevator {
     pub id: String,
@@ -300,11 +300,11 @@ pub fn elevator_system() {
 }
 
 pub fn concurrency_elevator_system() {
-    benchmark!(1, {
-        elevator_system();
-    });
-    let current_mem = PEAK_ALLOC.current_usage_as_kb();
-    println!("\nThis program currently uses {} KB of RAM.", current_mem);
-    let peak_mem = PEAK_ALLOC.peak_usage_as_kb();
-    println!("The max amount that was used {}", peak_mem);
+    // benchmark!(1, {
+    //     elevator_system();
+    // });
+    // let current_mem = PEAK_ALLOC.current_usage_as_kb();
+    // println!("\nThis program currently uses {} KB of RAM.", current_mem);
+    // let peak_mem = PEAK_ALLOC.peak_usage_as_kb();
+    // println!("The max amount that was used {}", peak_mem);
 }

@@ -6,7 +6,7 @@ use std::thread;
 use std::{collections::VecDeque, time::Duration};
 use threadpool::ThreadPool;
 
-fn main() {
+pub fn main() {
     // Button pressed
     let mut button_presses = VecDeque::from(vec![
         ButtonPressed::new_request(1, 0, 5),

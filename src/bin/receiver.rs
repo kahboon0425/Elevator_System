@@ -5,12 +5,18 @@ use std::{
 };
 
 use amiquip::{Connection, ConsumerMessage, ConsumerOptions, QueueDeclareOptions, Result};
+use bma_benchmark::benchmark;
 use crossbeam_channel::unbounded;
 use elevator_system::{elevator_handle_request, elevator_process_request, ButtonPressed, Message};
+use peak_alloc::PeakAlloc;
 use scheduled_thread_pool::ScheduledThreadPool;
+use std::hint::black_box;
 use threadpool::ThreadPool;
 
-fn main() {
+#[global_allocator]
+static PEAK_ALLOC: PeakAlloc = PeakAlloc;
+
+pub fn elevator_system() {
     let button_press_queue = Arc::new(Mutex::new(VecDeque::new()));
     let complete_receiving_buttons = Arc::new(Mutex::new(false));
     let scheduled_thread_pool = ScheduledThreadPool::new(2);
@@ -207,4 +213,14 @@ fn receive_instructions(
     }
 
     connection.close()
+}
+
+pub fn main() {
+    benchmark!(1, {
+        elevator_system();
+    });
+    let current_mem = PEAK_ALLOC.current_usage_as_kb();
+    println!("\nThis program currently uses {} KB of RAM.", current_mem);
+    let peak_mem = PEAK_ALLOC.peak_usage_as_kb();
+    println!("The max amount that was used {}", peak_mem);
 }
