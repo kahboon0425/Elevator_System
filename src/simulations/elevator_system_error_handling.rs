@@ -296,7 +296,7 @@ pub fn elevator_handle_request(
     elevator_request_r: &Receiver<QueueStatus>,
     elevator_requests_queue: &Mutex<VecDeque<ButtonPressed>>,
     current_floor: &Arc<Mutex<usize>>,
-    elevator_2_finish_s: &crossbeam_channel::Sender<()>,
+    elevator_finish_s: &crossbeam_channel::Sender<()>,
     handle: &JobHandle,
 ) -> bool {
     let mut elevator =
@@ -322,8 +322,8 @@ pub fn elevator_handle_request(
             QueueStatus::Empty => {}
             QueueStatus::Done => {
                 handle.cancel();
-                elevator_2_finish_s.send(()).unwrap();
-                // elevator_2_finish_s.send(()).expect("All task are finish");
+                elevator_finish_s.send(()).unwrap();
+                // elevator_finish_s.send(()).expect("All task are finish");
                 return true;
             }
         }
@@ -359,7 +359,6 @@ pub fn elevator_system() {
     let pool = ThreadPool::new(6);
 
     {
-        // Elevator Maintenance Event
         let event_sender = event_sender.clone();
         pool.execute(move || {
             let mut rng = rand::thread_rng();
@@ -380,6 +379,7 @@ pub fn elevator_system() {
     }
 
     {
+        // Elevator Maintenance Event
         let event_sender = event_sender.clone();
         pool.execute(move || {
             let mut rng = rand::thread_rng();
@@ -409,7 +409,6 @@ pub fn elevator_system() {
     {
         // Button Press Event
         let event_sender = event_sender.clone();
-        let power_outage_receiver = power_outage_receiver.clone();
 
         pool.execute(move || loop {
             if let Some(button_pressed) = button_presses.pop_front() {
@@ -423,15 +422,6 @@ pub fn elevator_system() {
                     .send(ElevatorEvent::ButtonPress(button_pressed))
                     .unwrap();
             } else {
-                match power_outage_receiver.try_recv() {
-                    Ok(message) => {
-                        if message == ElevatorEvent::PowerOutage {
-                            event_sender.send(ElevatorEvent::Complete).unwrap();
-                            break;
-                        }
-                    }
-                    Err(_) => {}
-                }
                 event_sender.send(ElevatorEvent::Complete).unwrap();
                 break;
             }
@@ -496,12 +486,12 @@ pub fn elevator_system() {
         let button_press_queue = Arc::clone(&button_press_queue);
         let elevator_requests_queue = Arc::new(Mutex::new(VecDeque::new()));
         let complete_receiving_buttons = Arc::clone(&complete_receiving_buttons);
-        let elevator_under_maintenence = Arc::clone(&elevator_under_maintenence);
 
         let handle = {
             let elevator_requests_queue = Arc::clone(&elevator_requests_queue);
             let elevator_1_current_floor = Arc::clone(&elevator_1_current_floor);
             let complete = Arc::new(Mutex::new(false));
+            let elevator_under_maintenence = Arc::clone(&elevator_under_maintenence);
 
             scheduled_thread_pool.execute_at_fixed_rate(
                 Duration::from_millis(5),
@@ -530,18 +520,21 @@ pub fn elevator_system() {
             let elevator_requests_queue = Arc::clone(&elevator_requests_queue);
             let elevator_1_current_floor = Arc::clone(&elevator_1_current_floor);
 
-            pool.execute(move || loop {
-                if elevator_handle_request(
-                    elevator_name,
-                    &elevator_1_request_r,
-                    &elevator_requests_queue,
-                    &elevator_1_current_floor,
-                    &elevator_1_finish_s,
-                    &handle,
-                ) {
-                    // QueueStatus is done.
-                    break;
+            pool.execute(move || {
+                loop {
+                    if elevator_handle_request(
+                        elevator_name,
+                        &elevator_1_request_r,
+                        &elevator_requests_queue,
+                        &elevator_1_current_floor,
+                        &elevator_1_finish_s,
+                        &handle,
+                    ) {
+                        // QueueStatus is done.
+                        break;
+                    }
                 }
+                println!("Elevator {elevator_name} stopped.");
             });
         }
     }
@@ -557,6 +550,7 @@ pub fn elevator_system() {
             let elevator_requests_queue = Arc::clone(&elevator_requests_queue);
             let elevator_2_current_floor = Arc::clone(&elevator_2_current_floor);
             let complete = Arc::new(Mutex::new(false));
+            let elevator_under_maintenence = Arc::clone(&elevator_under_maintenence);
 
             scheduled_thread_pool.execute_at_fixed_rate(
                 Duration::from_millis(5),
@@ -566,6 +560,7 @@ pub fn elevator_system() {
                         elevator_2_request_s.send(QueueStatus::Done).unwrap();
                         return;
                     }
+
                     elevator_process_request(
                         elevator_name,
                         &elevator_2_current_floor,
@@ -582,54 +577,52 @@ pub fn elevator_system() {
         {
             let elevator_requests_queue = Arc::clone(&elevator_requests_queue);
             let elevator_2_current_floor = Arc::clone(&elevator_2_current_floor);
-            pool.execute(move || loop {
-                if elevator_handle_request(
-                    elevator_name,
-                    &elevator_2_request_r,
-                    &elevator_requests_queue,
-                    &elevator_2_current_floor,
-                    &elevator_2_finish_s,
-                    &handle,
-                ) {
-                    // QueueStatus is done.
-                    break;
+
+            pool.execute(move || {
+                loop {
+                    if elevator_handle_request(
+                        elevator_name,
+                        &elevator_2_request_r,
+                        &elevator_requests_queue,
+                        &elevator_2_current_floor,
+                        &elevator_2_finish_s,
+                        &handle,
+                    ) {
+                        // QueueStatus is done.
+                        break;
+                    }
                 }
+                println!("Elevator {elevator_name} stopped.");
             });
         }
     }
 
-    // pool.join();
     loop {
         let power_outage_receiver = power_outage_receiver.clone();
 
-        match power_outage_receiver.try_recv() {
-            Ok(message) => {
-                if message == ElevatorEvent::PowerOutage {
-                    panic!("!!!!!!!!!!!!!!! Alert: Power Outage Occur !!!!!!!!!!!!!!!!!");
-                }
+        if let Ok(message) = power_outage_receiver.try_recv() {
+            if message == ElevatorEvent::PowerOutage {
+                panic!("!!!!!!!!!!!!!!! Alert: Power Outage Occur !!!!!!!!!!!!!!!!!");
             }
-            Err(_) => {
-                if !(*complete_receiving_buttons.lock().unwrap()) {
-                    continue;
-                } else if !elevator_1_finish_r.is_empty() && !elevator_2_finish_r.is_empty() {
-                    break;
-                } else if elevator_1_finish_r.is_empty() && elevator_2_finish_r.is_empty() {
-                    if let Ok(_) = power_outage_receiver.try_recv() {
-                        break;
-                    }
-                }
-            }
+        }
+
+        let elevator_finished = !elevator_1_finish_r.is_empty() && !elevator_2_finish_r.is_empty();
+
+        if !(*complete_receiving_buttons.lock().unwrap()) {
+            continue;
+        } else if elevator_finished {
+            break;
         }
     }
 }
 
 pub fn elevator_system_error_handling() {
     benchmark!(1, {
-        let system = std::thread::spawn(elevator_system);
-        match system.join() {
-            Ok(_) => println!("Finished without panic."),
-            Err(_) => println!("System panic somewhere..."),
-        }
+        // let system = std::thread::spawn(elevator_system);
+        // match system.join() {
+        //     Ok(_) => println!("Finished without panic."),
+        //     Err(_) => println!("System panic somewhere..."),
+        // }
+        elevator_system();
     });
-    // elevator_system();
 }
